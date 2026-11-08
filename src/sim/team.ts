@@ -1,5 +1,5 @@
 // Teams and help requests (v1.1).
-// Nearly all work beyond the camp perimeter (CFG.FAR_M) is done in pairs or threes. The man who takes such a job
+// Nearly all work beyond the camp perimeter (SPECIES.scout.home.safeR) is done in pairs or threes. The man who takes such a job
 // posts a request for the men he needs (CFG.TEAM_SIZE) and waits at a rally point. Every other scout weighs what
 // he is doing against the request's urgency and answers one of three ways:
 //   now      - drops it and comes ("Right behind you")
@@ -10,7 +10,11 @@
 // or call it off. In camp, men also join each other's jobs (building, cooking, processing...) for joint work:
 // faster with diminishing returns (CFG.TEAM_WORK), and a little better (CFG.TEAM_QUALITY).
 // Everything here is deterministic: no RNG, scouts are visited in array order.
-import { CFG } from './config';
+import { CFG, SPECIES } from './config';
+import { Answerer, answerRequest, collectAnswers, rallyVerdict, Answer } from './agent/request';
+import { outside } from './agent/home';
+
+const RULES = SPECIES.scout.team;
 import { World, Scout, Act, Team, dist, TPH, hourOf, isDark, addLog } from './core';
 import { able, say, mkAct, startAct, endAct, campXY, campAlert, moveTo, fireSeat, built, byId } from './ai';
 
@@ -126,11 +130,11 @@ export function remainingH(w: World, o: Scout): number {
 // ---------- posting a request ----------
 export function openTeam(w: World, s: Scout, a: Act): Team {
   const [cx, cy] = campXY(w);
-  const inCamp = dist(s.x, s.y, cx, cy) < CFG.FAR_M;
+  const inCamp = dist(s.x, s.y, cx, cy) < SPECIES.scout.home.safeR;
   const urg = CFG.TEAM_URGENCY[a.kind] ?? goalPri(w, a.goal);
   // out there, the team re-forms on the spot only if a mate close by would come straight away (e.g. after a fight);
   // otherwise the leader walks back and the team links up in camp
-  const mateNear = w.scouts.some((o) => o !== s && able(o) && o.status === 'ok' && !o.sleeping && dist(o.x, o.y, s.x, s.y) < CFG.TEAM_RALLY_MATE_M && actValue(w, o) + CFG.TEAM_DROP_MARGIN <= urg);
+  const mateNear = w.scouts.some((o) => o !== s && able(o) && o.status === 'ok' && !o.sleeping && dist(o.x, o.y, s.x, s.y) < CFG.TEAM_RALLY_MATE_M && actValue(w, o) + RULES.dropMargin <= urg);
   const [rx, ry] = inCamp || mateNear || !w.camp.sited ? [s.x, s.y] : fireSeat(w, s, 6);
   const need = teamSizeFor(w, a);
   const t: Team = { need, urg, crew: [], promised: [], helpWith: -1, phase: 'rally', posted: w.tick, waitT: 0, asked: {}, noun: jobNoun(w, a), rx, ry };
@@ -155,22 +159,19 @@ export function openRequests(w: World, s: Scout): Scout[] {
   return w.scouts.filter((L) => L !== s && able(L) && !!L.act && !!L.act.team && L.act.team.phase === 'rally' && 1 + L.act.team.crew.length + L.act.team.promised.length < L.act.team.need);
 }
 
-// ---------- answering requests (every DECIDE_EVERY ticks) ----------
-type Answer = 'now' | 'promise' | 'first' | 'no' | 'skip';
-export function answer(w: World, L: Scout, t: Team, o: Scout): Answer {
-  if (o === L || !able(o) || o.status !== 'ok' || o.sleeping || o.combat || o.tag === 'pack' || o.promise >= 0) return 'skip';
-  if (t.crew.indexOf(o.id) >= 0 || t.promised.indexOf(o.id) >= 0) return 'skip';
-  if (o.act && (o.act.kind === 'buddy' || o.act.team || (o.act.kind === 'assist' && o.act.leader === L.id))) return 'skip';
-  if (urgentNeed(o)) return 'skip';
-  if ((t.asked[o.id] || -1e9) > w.tick) return 'skip';
-  const v = actValue(w, o);
-  if (v >= 50) return 'no';
-  if (v + CFG.TEAM_DROP_MARGIN <= t.urg) return 'now';
-  if (remainingH(w, o) <= CFG.TEAM_PROMISE_MAX_H) return 'promise';   // (his trip back counts: remainingH includes travel)
-  const a = o.act;
-  if (a && JOINABLE.indexOf(a.kind) >= 0 && !a.needBuddy && t.helpWith < 0 && distCamp(w, a.tx, a.ty) < CFG.FAR_M && distCamp(w, L.x, L.y) < CFG.FAR_M) return 'first';
-  return 'no';
+// ---------- answering requests (every DECIDE_EVERY ticks): the shared request engine (agent/request.ts) ----------
+/** The scout side of the shared help-request engine: how a scout weighs a mate's request. */
+function scoutAnswerer(w: World, L: Scout): Answerer<Scout> {
+  return {
+    id: (o) => o.id,
+    unavailable: (o) => o === L || !able(o) || o.status !== 'ok' || o.sleeping || o.combat || o.tag === 'pack' || o.promise >= 0
+      || (!!o.act && (o.act.kind === 'buddy' || !!o.act.team || (o.act.kind === 'assist' && o.act.leader === L.id))) || urgentNeed(o),
+    value: (o) => actValue(w, o),
+    remainingH: (o) => remainingH(w, o),   // (his trip back counts: remainingH includes travel)
+    canHelpFirst: (o) => { const a = o.act; return !!a && JOINABLE.indexOf(a.kind) >= 0 && !a.needBuddy && !outside(SPECIES.scout.home, distCamp(w, a.tx, a.ty)) && !outside(SPECIES.scout.home, distCamp(w, L.x, L.y)); },
+  };
 }
+export function answer(w: World, L: Scout, t: Team, o: Scout): Answer { return answerRequest(RULES, scoutAnswerer(w, L), t, o, w.tick); }
 export function teamTick(w: World): void {
   for (const L of w.scouts) {
     const t = L.act && L.act.team; if (!t || t.phase !== 'rally' || !able(L)) continue;
@@ -180,16 +181,13 @@ export function teamTick(w: World): void {
     if (t.helpWith >= 0) { const h = sc(w, t.helpWith); if (!h || !h.act || JOINABLE.indexOf(h.act.kind) < 0 || t.promised.indexOf(h.id) < 0) t.helpWith = -1; }
     syncBuddy(L.act!);
     if (1 + t.crew.length + t.promised.length >= t.need) continue;
-    const answers: { o: Scout; r: Answer; d: number }[] = [];
-    for (const o of w.scouts) { const r = answer(w, L, t, o); if (r !== 'skip') answers.push({ o, r, d: dist(o.x, o.y, L.x, L.y) }); }
-    const rank: Record<Answer, number> = { now: 0, promise: 1, first: 2, no: 3, skip: 4 };
-    answers.sort((p, q) => rank[p.r] - rank[q.r] || p.d - q.d || p.o.id - q.o.id);
+    const answers = collectAnswers(RULES, scoutAnswerer(w, L), t, w.scouts, (o) => dist(o.x, o.y, L.x, L.y), w.tick);
     for (const { o, r } of answers) {
       if (1 + t.crew.length + t.promised.length >= t.need) break;
       if (r === 'now') { endAct(w, o, 'joining ' + L.name); startAct(w, o, joinAct(w, L, o, 'now')); o.why = 'team'; }
       else if (r === 'promise') { o.promise = L.id; t.promised.push(o.id); w.stats.team.promise++; say(w, o, 'teamSec', { x: actNoun(o.act), n: L.name }); }
       else if (r === 'first') { o.promise = L.id; t.promised.push(o.id); t.helpWith = o.id; w.stats.team.helpFirst++; say(w, o, 'teamFirst', { x: actNoun(o.act), n: L.name }); }
-      else { t.asked[o.id] = w.tick + CFG.TEAM_REASK_H * TPH(); w.stats.team.refused++; }
+      else { t.asked[o.id] = w.tick + RULES.reaskH * TPH(); w.stats.team.refused++; }
     }
   }
 }
@@ -235,19 +233,13 @@ export function leaderRally(w: World, s: Scout, a: Act): boolean {
     s.thought = `${a.label}: waiting for ${t.need - have} more` + (t.promised.length ? ` (${t.promised.map((id) => sc(w, id)?.name).join(', ')} coming)` : '');
   }
   const crew = crewOf(w, s);
-  const linked = t.helpWith < 0 && crew.every((b) => dist(b.x, b.y, s.x, s.y) <= CFG.TEAM_LINK_M);
-  if (1 + crew.length >= t.need && linked) { depart(w, s, t, 'full'); return true; }
-  // safety net, counted as a deadlock: a request must never hang (the fallbacks below should always fire first)
-  if (t.waitT > (CFG.TEAM_WAIT_MAX_H + 0.5) * tph) { w.stats.team.deadlocks++; w.stats.mon.notes.push(`team deadlock ${s.name} t${w.tick} ${a.kind}`); cancel(w, s, t, 'team never formed'); return true; }
-  const waited = t.waitT / tph;
-  const giveUp = (waited > CFG.TEAM_WAIT_H && t.promised.length === 0) || waited > CFG.TEAM_WAIT_MAX_H;
-  if (giveUp) {
-    // whoever has joined goes; the leader's go() waits for anyone still walking over, so they link up on the way
-    if (crew.length >= 1) { depart(w, s, t, 1 + crew.length >= t.need ? 'full' : 'smaller'); return true; }
-    if (lowRisk(w, a)) { depart(w, s, t, 'solo'); return true; }
-    cancel(w, s, t, 'no team'); return true;
-  }
-  return true;
+  const linked = t.helpWith < 0 && crew.every((b) => dist(b.x, b.y, s.x, s.y) <= RULES.linkM);
+  const v = rallyVerdict(RULES, t, crew.length, linked, tph, () => crew.length === 0 && lowRisk(w, a));
+  if (v === 'wait') return true;
+  if (v === 'deadlock') { w.stats.team.deadlocks++; w.stats.mon.notes.push(`team deadlock ${s.name} t${w.tick} ${a.kind}`); cancel(w, s, t, 'team never formed'); return true; }
+  if (v === 'cancel') { cancel(w, s, t, 'no team'); return true; }
+  // whoever has joined goes; the leader's go() waits for anyone still walking over, so they link up on the way
+  depart(w, s, t, v); return true;
 }
 /** The leader waits for any of his team who are lagging (nobody gets left alone out there). */
 export function crewLagging(w: World, s: Scout): boolean {
@@ -315,7 +307,7 @@ export function assistOptions(w: World, s: Scout): { L: Scout; gain: number; pri
   const out: { L: Scout; gain: number; pri: number }[] = [];
   for (const L of w.scouts) {
     const a = L.act; if (L === s || !a || !able(L) || JOINABLE.indexOf(a.kind) < 0 || a.needBuddy || a.step > 1) continue;
-    if (distCamp(w, a.tx, a.ty) >= CFG.FAR_M) continue;
+    if (distCamp(w, a.tx, a.ty) >= SPECIES.scout.home.safeR) continue;
     const max = CFG.ASSIST_MAX[a.kind] ?? 0; if (max <= 0) continue;
     const k = w.scouts.filter((o) => o.act && o.act.kind === 'assist' && o.act.leader === L.id).length;
     if (k >= max) continue;

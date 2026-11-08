@@ -3,7 +3,7 @@
 // data/tabe_big.packed.json by scripts/packmap.ts and decoded once at startup.
 import TABE from '../../data/tabe_big.packed.json';
 import { packTiles, unpackTiles } from './mapdata';
-import { CFG, FEATURES, NAMES, TRAIT_PAIRS, TRAITS_PER_SCOUT, NEED_IDS, Item, SKILL_IDS, SkillId, COMPANY_NAME, Trait } from './config';
+import { CFG, SPECIES, FEATURES, NAMES, TRAIT_PAIRS, TRAITS_PER_SCOUT, NEED_IDS, Item, SKILL_IDS, SkillId, COMPANY_NAME, Trait } from './config';
 import {
   World, Scout, Inv, T, rnd, rint, pick, dist, clamp, TPH, hourOf, dayOf, genTerrain, carveWater, tileCenter,
   PASSABLE, addLog, invAdd, invGet, newId, nearestPassable, needsFull, tileOf, DayReport, tfx,
@@ -11,7 +11,8 @@ import {
 } from './core';
 import { fallSick, commander, campAlert, able, decide, runAct, endAct, planTick, tickNeeds, tickMorale, campXY, fireLit, built, stock, cargoValue, orderCost, say, chainOrder, foodPoints } from './ai';
 import { perceive, combatTick, tickBullets, tickDowned } from './combat';
-import { directorTick, wildTick, deerTick } from './wild';
+import { directorTick, wildTick, deerTick, initNests } from './wild';
+import { pocketTick } from './pocket';
 import { teamTick } from './team';
 
 export interface WorldOpts { kind?: 'island' | 'arena'; noRoukha?: boolean; noBoat?: boolean; scouts?: number; scenario?: string; difficulty?: string }
@@ -21,7 +22,7 @@ export function blankWorld(seed: number, n: number): World {
   return {
     seed, tick: 0, rng: (Math.imul(seed, 2654435761) >>> 0) || 1, nextId: 1,
     map: { n, terrain: [], trail: {}, seen: new Array(n * n).fill(0), water: [] }, landing: { x: 0, y: 0, sx: 0, sy: 0 }, wind: { x: 1, y: 0 },
-    scouts: [], deer: [], birds: [], packs: [], trees: [], bushes: [], fish: [], carcasses: [], gatherings: [], bullets: [], signs: [], intel: [], waterPts: [], spare: [], rookeries: [], departed: [],
+    scouts: [], deer: [], birds: [], packs: [], trees: [], bushes: [], fish: [], carcasses: [], gatherings: [], bullets: [], signs: [], intel: [], waterPts: [], spare: [], rookeries: [], nests: [], departed: [],
     camp: {
       sited: false, x: 0, y: 0, tree: -1, packsDown: 0, fire: Object.assign(B(), { fuel: 0 }), latrine: B(), builds: {}, proposals: [], stock: {},
       pile: { x: 0, y: 0 }, cask: { x: 0, y: 0 }, range: { x: 0, y: 0 }, treat: { x: 0, y: 0 }, readyTick: { fire: -1, latrine: -1, wood: -1 },
@@ -36,6 +37,7 @@ export function blankWorld(seed: number, n: number): World {
       shots: 0, hits: 0, birdKills: 0, deerKills: 0, deaths: 0, downs: 0, rescues: 0, charges: 0, withdraws: 0, roukhaHunts: 0, seasonFees: 0, beaksSold: 0, debtDays: 0, license: 0, wages: 0,
       packsSpawned: 0, phantomWork: 0, boatsDone: 0, shotTicks: [], days: [], mon: { stuck: 0, idle: 0, oscillation: 0, lone: 0, exceptions: 0, notes: [] },
       team: { requests: 0, departed: 0, full: 0, smaller: 0, solo: 0, cancelled: 0, waitTicks: 0, maxWait: 0, now: 0, promise: 0, helpFirst: 0, refused: 0, assists: 0, helpTicks: 0, outsideTicks: 0, soloOutsideTicks: 0, deadlocks: 0, dragTicks: 0, dragAloneTicks: 0 },
+      roukha: { musters: 0, hunts: 0, musterCancel: 0, deadlocks: 0, now: 0, promise: 0, helpFirst: 0, packSizes: {}, retreats: 0, scatters: 0, returns: 0, flees: 0, defends: 0, fights: 0, fightTicks: 0 }, pocketMeals: 0, pocketPts: 0,
       dayMin: {}, eaten: {}, drank: 0, leisure: {},
     },
   };
@@ -59,7 +61,7 @@ export function makeScout(w: World, x: number, y: number, rank: number, skills: 
     id: newId(w), name, squad: 0, trait: traits[0], traits, rank, skills: { ...skills },
     x, y, px: x, py: y, fx: 0, fy: -1, hp, maxHp: hp, status: 'ok', bleed: 0, recover: 0, draggedBy: -1,
     needs: needsFull(), purse: 0, morale: 65, thoughts: [], carry: {}, mag: g.mag, ammo: CFG.CARRY_AMMO, reload: 0, guns, jam: 0, gear: 80 + rint(w, 0, 20), wound: 0, stabilized: false,
-    act: null, posture: 'stand', postureT: 0, aimT: 0, aimTarget: -1, cooldown: 0, thought: '', bark: '', barkUntil: 0,
+    act: null, posture: 'stand', postureT: 0, aimT: 0, aimTarget: -1, cooldown: 0, firePhase: '', fireT: 0, flashT: -99, aimNeed: 15, pocket: {}, snackT: 0, thought: '', bark: '', barkUntil: 0,
     threat: null, combat: false, sleeping: false, lastLeisure: 0, idleT: 0, stillT: 0, failT: 0,
     hist: [], starts: [], joined: w.tick, tag: 'pack', lastMeal: 0, lastDrink: 0, stress: 0, sick: 0, cool: {}, why: '', combatFlips: [], clearT: 0, carcassMode: '', sickKind: '', injuries: [], medicUntil: 0, hangover: 0, grief: 0, together: {}, homeBound: false, shipped: false, promise: -1,
   };
@@ -147,6 +149,8 @@ export function createWorld(seed: number, opts: WorldOpts = {}): World {
   reveal(w, lx, ly, CFG.LANDING_REVEAL_M);
   w.boat.nextArrive = tickAt(1 + rint(w, CFG.BOAT_EVERY_DAYS[0], CFG.BOAT_EVERY_DAYS[1]), CFG.BOAT_ARRIVE_H);
   addLog(w, COMPANY_NAME, `The boat drops ${count} scouts and their crates on the beach. Boss: ${chainOrder(w)[0].name}.`, 'event');
+  // Roukha nests (last, so trees and bushes keep the same ids as the pristine island used by compact saves)
+  if (kind === 'island') initNests(w, ((TABE as { nests?: number[][] }).nests) || []);
   return w;
 }
 function addTree(w: World, i: number, size: number): void {
@@ -215,6 +219,7 @@ export function step(w: World): void {
       if ((w.tick + s.id) % 25 === 0) tickMorale(w, s);
       if ((w.tick + s.id) % 5 === 0) perceive(w, s);
       if (combatTick(w, s)) continue;
+      if (pocketTick(w, s)) continue;   // eating from his pocket out there
       if (s.act && (w.tick + s.id) % CFG.DECIDE_EVERY === 0) maybeInterrupt(w, s, h);
       if (!s.act) decide(w, s);
       if (s.act) runAct(w, s);
@@ -410,8 +415,8 @@ function monitors(w: World): void {
     const far = dist(s.x, s.y, cx, cy) > CFG.LONE_LIMIT_M && !atBoat;
     const buddy = w.scouts.some((o) => o !== s && o.status !== 'dead' && dist(o.x, o.y, s.x, s.y) < 20);
     // team stats: time spent clearly outside the perimeter, and how much of it alone
-    if (w.camp.sited && dist(s.x, s.y, cx, cy) > CFG.FAR_M + 10) { w.stats.team.outsideTicks++; if (!buddy) w.stats.team.soloOutsideTicks++; }
-    if (s.carcassMode === 'drag' && w.camp.sited && dist(s.x, s.y, cx, cy) > CFG.FAR_M) { w.stats.team.dragTicks++;   // (inside the perimeter the last stretch can be done alone)
+    if (w.camp.sited && dist(s.x, s.y, cx, cy) > SPECIES.scout.home.safeR + 10) { w.stats.team.outsideTicks++; if (!buddy) w.stats.team.soloOutsideTicks++; }
+    if (s.carcassMode === 'drag' && w.camp.sited && dist(s.x, s.y, cx, cy) > SPECIES.scout.home.safeR) { w.stats.team.dragTicks++;   // (inside the perimeter the last stretch can be done alone)
       if (!w.scouts.some((o) => o !== s && able(o) && dist(o.x, o.y, s.x, s.y) < 8)) w.stats.team.dragAloneTicks++; }
     if (far && !buddy && w.camp.sited) { s.cool['loneT'] = (s.cool['loneT'] || 0) + 1; if (s.cool['loneT'] === CFG.LONE_GRACE_S * CFG.TICK_HZ) { w.stats.mon.lone++; w.stats.mon.notes.push(`lone ${s.name} t${w.tick} ${s.act ? s.act.kind : '-'} d=${Math.round(dist(s.x, s.y, cx, cy))}`); } }
     else s.cool['loneT'] = 0;

@@ -1,5 +1,76 @@
 # Changelog
 
+## 1.2.0 - 2026-11-08
+Shared AI modules, Roukha nests and hunting packs, fear and retreat, a readable firing sequence, food points and pocket rations, and danger tuning. The sim is still deterministic (seeded, fixed 10 Hz). Every invented number is marked PLACEHOLDER in `src/sim/config.ts`.
+
+### Added
+- **Shared AI modules** in `src/sim/agent/`. They are pure functions, and scouts and Roukha both use them:
+  - `needs.ts`: need decay and urgency;
+  - `home.ts`: home comfort and distance from home;
+  - `request.ts`: the team-request engine, with collect answers and a rally verdict (now / gimme a sec / help me first).
+  - Species data lives in `SPECIES` (config.ts). The adapters are `scoutAnswerer` (team.ts) and `birdAnswerer` (wild.ts).
+  - Scouts were moved onto these modules with bit-identical results against v1.1. See `docs/ROUKHA_INTENT.md` and `docs/SCOUT_INTENT.md`.
+- **Roukha nests:** 4 nests about 335-347 m from the landing, stored in map meta. Each starts with 7-9 birds (`NEST_BIRDS`), is capped at `NEST_MAX` 10, and regrows one bird every 14 h.
+- **Hunting packs:**
+  - A pack has 4-7 birds (`HUNT_PACK`) and is led by a bull. Fewer than 4 able birds means no hunt: they feed and stay near the nest.
+  - Before a hunt, the bull musters the flock through the shared request engine.
+  - Hunters come home fed, and the birds left at the nest get a share (`HUNT_SHARE`).
+- **Fear and retreat** (`FEAR` table):
+  - Fear comes from losses (scaled by pack size), wounds, a downed bull, gunfire (capped, so gunfire alone never breaks a pack), distance from the nest and bad odds.
+  - At `breakAt` the pack retreats to the nest.
+  - A lone wounded bird flees and leaves a blood trail.
+  - A pack that has downed 2 scouts goes home sated.
+- **Firing sequence:** "Contact!" → crouch → present (0.5 s) → aim (1-2 s; snap shots up close; moving targets widen the cone) → shoot → bolt (1 s for a rifle, faster for a carbine or pistol) → aim again.
+  - On screen: an aim line with a progress ring, a muzzle flash, a ⟲ bolt cue and a crouch pose.
+  - Misses happen, and when birds close in it becomes melee.
+- **Food points:** a full meal is 100 points. `FOOD` gives each item its points, a spoils flag and an edible flag:
+  - meal 40, spoils;
+  - smoked 32, keeps;
+  - ration 35, keeps;
+  - berries 9, spoils;
+  - raw meat and raw fish 36, spoil, not edible raw.
+- **Pocket rations** (`src/sim/pocket.ts`):
+  - A scout heading out packs about 150 points of non-spoiling food (`POCKET_PTS`) and leaves a camp reserve (`POCKET_RESERVE`).
+  - He eats it outside when hungry. Leftovers go back to the stores when he gets home.
+  - If the camp only has spoilable food, behaviour is unchanged from v1.1.
+- **UI:**
+  - the HUD 🍖 chip shows food in points, and the camp popup shows points per item;
+  - the scout tap card shows pocket food;
+  - nests and pack labels, plus muster and flee rings.
+- **Viewer URL params:** `tick=`, `look=nest|pack|fight`, `reveal=1`. The save key is now `tabe-pocket-save-v1.2`.
+- **Tests:** `tests/v12.test.ts`, 14 tests. The suite has 44 tests in total.
+- **Soak report:** `scripts/soak_report.ts` now gives the full v1.2 metrics.
+- **Shots:** `shots/v1_2-{muster,firing,retreat,pocket,hud}.png`, 844×390 with phone insets.
+
+### Changed
+- **Wounds:**
+  - a downed scout's wound severity is `DOWN_WOUND` plus overkill;
+  - a rescue can lose a man above `MORTAL_WOUND`;
+  - birds are tougher (`BIRD_TOUGH`) and press on in a charge;
+  - at most 2 birds peck one scout (`MAX_ON_ONE`).
+- **Explorers avoid known nests.** A hungry scout eats supper before sleeping (`SUPPER_FIRST`).
+- **Food is counted in points everywhere:** eating, stores and AI.
+- **Removed** the old wild-flock and rookery-pack knobs.
+
+### Soak (30 seeds × 20 days, seeds 300-329)
+| metric | v1.1 | v1.2 |
+|---|---|---|
+| camps alive at day 20 | 30/30 | 29/30 (25 with no deaths) |
+| deaths (per run) | 0 | 10 (0.33); per run {0:25, 1:3, 2:1, 5:1} |
+| games over | 0 | 1 |
+| scouts downed | - | 65 |
+| kills/day | 2.39 | 3.06 |
+| shots per kill / hit rate | - | 3.7 / 59.8% |
+| hunts (musters) | - | 723 (723) |
+| pack sizes | - | 4:225, 5:208, 6:160, 7:130 (avg 5.3) |
+| pack retreats (fear) / walked home / wounded birds fled | - | 321 / 393 / 792 |
+| fights / avg length | - | 353 / 11.0 s sim (0.44 game h) |
+| pocket meals | - | 121 (0.20/day, 5670 pts) |
+| solo departures / time outside alone | 1.2% / 2.7% | 2.5% / 3.5% |
+| avg team wait | 0.42 h | 0.38 h |
+| stuck / osc / exceptions | 5 / 35 / 0 | 0 / 50 / 0 |
+
+
 ## 1.1.0 - 2026-11-08
 A stability and quality pass, plus teams and the big island. The sim stays deterministic (seeded, fixed 10 Hz).
 

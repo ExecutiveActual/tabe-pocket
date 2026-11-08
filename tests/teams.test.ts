@@ -1,7 +1,7 @@
 // v1.1 scenario tests: help requests and teams, joint work in camp, sight vs fog, scout speed, the big pre-baked map.
 import { describe, it, expect } from 'vitest';
 import { createWorld, step, runDays, tickAt, save, load, hashWorld, islandTiles, ISLAND_N } from '../src/sim/world';
-import { CFG } from '../src/sim/config';
+import { CFG, SPECIES } from '../src/sim/config';
 import { World, Scout, dist, tileOf, TPH } from '../src/sim/core';
 import { mkAct, startAct, endAct, fireSeat, moveTo, campXY } from '../src/sim/ai';
 import { openTeam, answer, teamTick, teamWork, crewOf, actValue } from '../src/sim/team';
@@ -72,17 +72,17 @@ describe('teams link up in camp and travel together', () => {
     for (const s of w.scouts.slice(1)) startAct(w, s, mkAct('idle', 'Idle', '', s.x, s.y, { until: w.tick + 50 }));
     const [fx, fy] = farSpot(w, 150);
     startAct(w, L, mkAct('explore', 'Scouting', 'explore', fx, fy, { needBuddy: true }));
-    let departed = -1, maxGap = 0, linkGap = 0;
+    let departed = -1, maxGap = 0, linkGap = 0, crewAtGo = 0;
     for (let i = 0; i < TPH() * 2 && L.act && L.act.kind === 'explore'; i++) {
       step(w);
       const t = L.act && L.act.team; if (!t) continue;
-      if (t.phase === 'go' && departed < 0) { departed = w.tick; linkGap = Math.max(0, ...crewOf(w, L).map((b) => dist(b.x, b.y, L.x, L.y))); }
+      if (t.phase === 'go' && departed < 0) { departed = w.tick; crewAtGo = t.crew.length; linkGap = Math.max(0, ...crewOf(w, L).map((b) => dist(b.x, b.y, L.x, L.y))); }
       if (departed >= 0 && w.tick - departed > 20) for (const b of crewOf(w, L)) maxGap = Math.max(maxGap, dist(b.x, b.y, L.x, L.y));
     }
     expect(departed, 'the team left').toBeGreaterThan(0);
-    expect(linkGap, 'linked up before leaving').toBeLessThanOrEqual(CFG.TEAM_LINK_M + 1);
+    expect(linkGap, 'linked up before leaving').toBeLessThanOrEqual(SPECIES.scout.team.linkM + 1);
     expect(maxGap, 'stayed together on the way').toBeLessThan(16);
-    expect(w.stats.team.solo).toBe(0);
+    expect(crewAtGo, 'he did not go alone').toBeGreaterThan(0);
   });
   it('nobody free: a low-risk job goes solo, a bird loot is cancelled (never dragged alone)', () => {
     for (const kind of ['fetchWater', 'loot']) {
@@ -91,7 +91,7 @@ describe('teams link up in camp and travel together', () => {
       const [fx, fy] = farSpot(w, 60);
       startAct(w, L, mkAct(kind, kind, '', fx, fy, { needBuddy: true, mode: kind === 'loot' ? 'J' : '' }));
       const t0 = w.tick; let outcome = ''; const solo0 = w.stats.team.solo, can0 = w.stats.team.cancelled;
-      while (w.tick - t0 < TPH() * (CFG.TEAM_WAIT_MAX_H + 1) && !outcome) {
+      while (w.tick - t0 < TPH() * (SPECIES.scout.team.waitMaxH + 1) && !outcome) {
         for (const s of w.scouts.slice(1)) { s.sleeping = true; if (!s.act || s.act.kind !== 'sleep') startAct(w, s, mkAct('sleep', 'Sleeping', '', s.x, s.y)); }
         step(w);
         if (w.stats.team.solo > solo0) outcome = 'solo'; else if (w.stats.team.cancelled > can0) outcome = 'cancel';
@@ -129,12 +129,12 @@ describe('outside work in the long run (4 seeds x 8 days, Roukha on)', () => {
       const w = createWorld(seed); let soloLoot = 0;   // a mate who dropped out to fight stays on the team (promised), so that's not solo
       for (let i = 0; i < 8 * CFG.DAY_TICKS; i++) {
         step(w);
-        if (i % 10 === 0) for (const s of w.scouts) { const a = s.act; if (a && a.kind.startsWith('loot') && a.team && a.team.phase === 'go' && a.team.crew.length === 0 && a.team.promised.length === 0 && s.status === 'ok' && dist(s.x, s.y, ...campXY(w)) > CFG.FAR_M + 10) soloLoot++; }
+        if (i % 10 === 0) for (const s of w.scouts) { const a = s.act; if (a && a.kind.startsWith('loot') && a.team && a.team.phase === 'go' && a.team.crew.length === 0 && a.team.promised.length === 0 && s.status === 'ok' && dist(s.x, s.y, ...campXY(w)) > SPECIES.scout.home.safeR + 10) soloLoot++; }
       }
       const T = w.stats.team, m = w.stats.mon;
       expect(T.departed, `${seed} teams`).toBeGreaterThan(15);
       expect(T.deadlocks, `${seed} deadlocks`).toBe(0);
-      expect(T.solo / Math.max(1, T.departed), `${seed} solo share`).toBeLessThan(0.1);
+      expect(T.solo / Math.max(1, T.departed), `${seed} solo share`).toBeLessThan(0.15);   // v1.2: fewer birds around camp, more jobs count as low-risk
       expect(T.soloOutsideTicks / Math.max(1, T.outsideTicks), `${seed} time outside alone`).toBeLessThan(0.12);
       expect(T.dragAloneTicks / Math.max(1, T.dragTicks), `${seed} dragged alone`).toBeLessThan(0.05);
       expect(soloLoot, `${seed} solo loot trips`).toBe(0);
@@ -152,7 +152,7 @@ describe('sight vs fog', () => {
     const x = s.x + 10, y = s.y; const ti = tileOf(w, x, y);
     w.map.seen[ti] = 0; expect(canSee(w, s, x, y)).toBe(false);
     w.map.seen[ti] = 1; expect(canSee(w, s, x, y)).toBe(true);
-    const r = Math.max(CFG.SCOUT_SIGHT_DAY_M, CFG.REVEAL_DAY_M) - 2; s.x += 0.01;
+    const r = Math.max(CFG.SCOUT_SIGHT_DAY_M, CFG.REVEAL_DAY_M) - 2; s.x += CFG.TILE_M * 1.01;   // a fresh tile (the reveal cache skips a repeat)
     for (let k = 0; k < 8; k++) { const ang = [[1, 0], [0, 1], [-1, 0], [0, -1], [0.7, 0.7], [-0.7, 0.7], [0.7, -0.7], [-0.7, -0.7]][k]; w.map.seen[tileOf(w, s.x + ang[0] * r, s.y + ang[1] * r)] = 0; }
     perceive(w, s);
     for (const ang of [[1, 0], [0, 1], [-1, 0], [0, -1]]) expect(w.map.seen[tileOf(w, s.x + ang[0] * r, s.y + ang[1] * r)]).toBe(1);

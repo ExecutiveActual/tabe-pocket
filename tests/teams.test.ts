@@ -9,7 +9,7 @@ import { canSee, perceive } from '../src/sim/combat';
 import { packTiles, unpackTiles } from '../src/sim/mapdata';
 import TABE from '../data/tabe_big.packed.json';
 
-const until = (w: World, t: number): void => { while (w.tick < t) step(w); };
+const until = (w: World, t: number): void => { while (w.tick < t && !w.over) step(w); };   // (a finished world stops ticking)
 /** A settled camp at 10:00 on day 2, everyone fed and rested, sitting round the fire doing nothing. */
 function staged(seed = 3): World {
   const w = createWorld(seed, { noRoukha: true, noBoat: true }); until(w, tickAt(2, 10));
@@ -127,9 +127,12 @@ describe('outside work in the long run (4 seeds x 8 days, Roukha on)', () => {
   it('teams form, nothing deadlocks, solo trips are rare, no bird is dragged alone, no shots into fog or with a rope in hand', () => {
     for (const seed of [301, 302, 303, 304]) {
       const w = createWorld(seed); let soloLoot = 0;   // a mate who dropped out to fight stays on the team (promised), so that's not solo
+      // (counted when it is still so on the next sample: a mate can be called off after the leader's turn in a tick, e.g. the
+      // boss when the boat docks, and the leader turns back on the very next tick; v1.2.1)
+      let prev = new Set<number>();
       for (let i = 0; i < 8 * CFG.DAY_TICKS; i++) {
         step(w);
-        if (i % 10 === 0) for (const s of w.scouts) { const a = s.act; if (a && a.kind.startsWith('loot') && a.team && a.team.phase === 'go' && a.team.crew.length === 0 && a.team.promised.length === 0 && s.status === 'ok' && dist(s.x, s.y, ...campXY(w)) > SPECIES.scout.home.safeR + 10) soloLoot++; }
+        if (i % 10 === 0) { const now = new Set<number>(); for (const s of w.scouts) { const a = s.act; if (a && a.kind.startsWith('loot') && a.team && a.team.phase === 'go' && a.team.crew.length === 0 && a.team.promised.length === 0 && s.status === 'ok' && dist(s.x, s.y, ...campXY(w)) > SPECIES.scout.home.safeR + 10) { now.add(s.id); if (prev.has(s.id)) soloLoot++; } } prev = now; }
       }
       const T = w.stats.team, m = w.stats.mon;
       expect(T.departed, `${seed} teams`).toBeGreaterThan(15);

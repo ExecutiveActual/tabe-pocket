@@ -32,8 +32,8 @@ function boot(): void {
   if (saved) { try { w = load(saved); resetCaches(); cam.x = w.camp.sited ? w.camp.x : w.landing.x; cam.y = w.camp.sited ? w.camp.y : w.landing.y } catch { newWorld(1); } }
   else newWorld(Number(s || 1));
   const d = Number(params.get('day') || 0); const hh = Number(params.get('hour') || 0);
-  if (d || hh) { const target = (d ? (d - 1) : 0) * CFG.DAY_TICKS + ((hh || CFG.START_HOUR) - CFG.START_HOUR) * (CFG.DAY_TICKS / 24); while (w.tick < target) step(w); }
-  const tk = Number(params.get('tick') || 0); while (w.tick < tk) step(w);   // land on an exact moment (screenshots, bug reports)
+  if (d || hh) { const target = (d ? (d - 1) : 0) * CFG.DAY_TICKS + ((hh || CFG.START_HOUR) - CFG.START_HOUR) * (CFG.DAY_TICKS / 24); while (w.tick < target && !w.over) step(w); }
+  const tk = Number(params.get('tick') || 0); while (w.tick < tk && !w.over) step(w);   // land on an exact moment (screenshots, bug reports)
   if (params.get('speed')) speed = Number(params.get('speed'));
   if (params.get('pick') === 'fight') { const p = w.scouts.find((x) => x.combat) || w.scouts.find((x) => x.threat); if (p) { selected = p.id; cam.x = p.x; cam.y = p.y; } }
   else if (params.get('pick')) { const p = w.scouts.find((x) => x.name === params.get('pick')); if (p) { selected = p.id; cam.x = p.x; cam.y = p.y; } }
@@ -239,6 +239,17 @@ function squadCentre(): [number, number] {
   return [x, y];
 }
 // ---------- drawing ----------
+// Which birds some scout can see, worked out once per sim tick (the drawing, nest and pack labels all ask; the answer
+// only changes when the sim steps). Viewer-side cache only: the same canSee() test the shooting uses.
+let shownTick = -1, shownWorld: World | null = null; const shownSet = new Set<number>();
+function birdShown(b: { id: number; x: number; y: number }): boolean {
+  if (shownTick !== w.tick || shownWorld !== w) {
+    shownTick = w.tick; shownWorld = w; shownSet.clear();
+    const eyes = w.scouts.filter((s) => s.status !== 'dead');
+    for (const o of w.birds) if (o.state !== 'dead' && eyes.some((s) => canSee(w, s, o.x, o.y))) shownSet.add(o.id);
+  }
+  return shownSet.has(b.id);
+}
 function draw(fogRefresh: boolean): void {
   const d = window.devicePixelRatio || 1; ctx.setTransform(d, 0, 0, d, 0, 0);
   ctx.fillStyle = '#1d4a66'; ctx.fillRect(0, 0, innerWidth, innerHeight);
@@ -288,7 +299,7 @@ function draw(fogRefresh: boolean): void {
   const fireLitNow = w.camp.sited && w.camp.fire.built && w.camp.fire.fuel > 0;
   for (const b of w.birds) {
     if (b.state === 'dead' || !vis(b.x, b.y)) continue;
-    const near = REVEAL || w.scouts.some((s) => s.status !== 'dead' && canSee(w, s, b.x, b.y)) || (fireLitNow && seen(b.x, b.y) && Math.hypot(b.x - w.camp.fire.x, b.y - w.camp.fire.y) < CFG.FIRE_LIGHT_M);
+    const near = REVEAL || birdShown(b) || (fireLitNow && seen(b.x, b.y) && Math.hypot(b.x - w.camp.fire.x, b.y - w.camp.fire.y) < CFG.FIRE_LIGHT_M);
     if (!near) continue;
     const [bx, by] = P(b);
     const sz = b.age === 'B' ? 1.6 : b.age === 'A' ? 1.25 : 0.9; const a = angleOf(b);
@@ -363,31 +374,34 @@ function draw(fogRefresh: boolean): void {
   for (const b of bubbleDraws) placed.push([b.sx, b.sy - 11, b.tw, 20]);
   // labels (screen space, placed so they don't pile on top of each other): what he's doing, the request flag, his name
   if (cam.z >= 2.2 && !mapView) {
-    const L = (t: string, x: number, y: number, col: string, px: number): void => { if (t) placeLabel(t, x, y, col, px); };
+    const L = (t: string, x: number, y: number, col: string, px: number, key?: string): void => { if (t) placeLabel(t, x, y, col, px, key); };
+    const boss = commander(w);
     const order = [...w.scouts].sort((p, q) => (q.id === selected ? 1 : 0) - (p.id === selected ? 1 : 0) || (q.act && q.act.team ? 1 : 0) - (p.act && p.act.team ? 1 : 0) || p.id - q.id);
     // nests and packs (v1.2): what the birds are up to, where a scout could see it
     for (const n of w.nests) {
       if (!seen(n.x, n.y)) continue;
       const [px, py] = [n.x, n.y]; const sx = (px - cam.x) * cam.z + midX(), sy = (py - cam.y) * cam.z + midY();
       if (sx < -80 || sx > innerWidth + 80 || sy < -40 || sy > innerHeight + 40) continue;
-      const m = n.muster; const watched = REVEAL || w.birds.some((b) => b.nest === n.id && b.state !== 'dead' && w.scouts.some((o) => o.status !== 'dead' && canSee(w, o, b.x, b.y)));
-      L(`${n.name} nest` + (m && watched ? ` · mustering ${1 + m.crew.length}/${m.need}` : ''), sx, sy + 3.5 * cam.z + 10, m && watched ? '#ffd27a' : '#e0b090', 11);
+      const m = n.muster; const watched = REVEAL || w.birds.some((b) => b.nest === n.id && b.state !== 'dead' && birdShown(b));
+      L(`${n.name} nest` + (m && watched ? ` · mustering ${1 + m.crew.length}/${m.need}` : ''), sx, sy + 3.5 * cam.z + 10, m && watched ? '#ffd27a' : '#e0b090', 11, 'nest' + n.id);
     }
     for (const p of w.packs) {
       if (p.kind !== 'hunt' || p.state === 'gone') continue;
       const ms = w.birds.filter((b) => b.pack === p.id && b.state !== 'dead');
-      if (!REVEAL && !ms.some((b) => w.scouts.some((o) => o.status !== 'dead' && canSee(w, o, b.x, b.y)))) continue;
-      const sx = (p.x - cam.x) * cam.z + midX(), sy = (p.y - cam.y) * cam.z + midY();
+      if (!REVEAL && !ms.some((b) => birdShown(b))) continue;
+      // anchored on the drawn (interpolated) birds, not the pack centre the sim refreshes every 5 ticks (that made the label lag and jump)
+      let ax = 0, ay = 0; for (const b of ms) { const [bx, by] = P(b); ax += bx; ay += by; } ax /= Math.max(1, ms.length); ay /= Math.max(1, ms.length);
+      const sx = (ax - cam.x) * cam.z + midX(), sy = (ay - cam.y) * cam.z + midY();
       const txt = p.state === 'retreat' ? `retreating (${ms.length}) · fear ${Math.round(packFear(w, p))}` : p.state === 'return' ? `pack heading home (${ms.length})` : p.state === 'charge' ? `charging! (${ms.length})` : p.state === 'stalk' ? `pack stalking (${ms.length})` : `hunting pack (${ms.length})`;
-      L(txt, sx, sy - 3 * cam.z - 8, p.state === 'retreat' || p.state === 'return' ? '#9fe0a0' : '#ff8a70', 11);
+      L(txt, sx, sy - 3 * cam.z - 8, p.state === 'retreat' || p.state === 'return' ? '#9fe0a0' : '#ff8a70', 11, 'pack' + p.id);
     }
     for (const s of order) {
       if (s.status === 'dead' && s.shipped) continue;
       const [px, py] = P(s); const sx = (px - cam.x) * cam.z + midX(), sy = (py - cam.y) * cam.z + midY();
       if (sx < -60 || sx > innerWidth + 60 || sy < -40 || sy > innerHeight + 40) continue;
       const tag = shortLabel(s); const t = s.act && s.act.team;
-      L(t && t.phase === 'rally' ? `${tag.text} · need ${t.need - 1 - t.crew.length} more` : tag.text, sx, sy - 2.1 * cam.z - 4, t && t.phase === 'rally' ? '#ffd27a' : tag.col, 11);
-      if (cam.z >= 3.5) L(s.name + (s === commander(w) ? ' ★' : ''), sx, sy + 2.2 * cam.z + 9, '#fff', 10);
+      L(t && t.phase === 'rally' ? `${tag.text} · need ${t.need - 1 - t.crew.length} more` : tag.text, sx, sy - 2.1 * cam.z - 4, t && t.phase === 'rally' ? '#ffd27a' : tag.col, 11, 'act' + s.id);
+      if (cam.z >= 3.5) L(s.name + (s === boss ? ' ★' : ''), sx, sy + 2.2 * cam.z + 9, '#fff', 10, 'name' + s.id);
     }
   }
   // bubbles go on top; the labels were placed around them
@@ -397,8 +411,18 @@ function draw(fogRefresh: boolean): void {
     if (tail) { ctx.beginPath(); ctx.moveTo(sx - 4, sy - 2); ctx.lineTo(sx, sy + 4); ctx.lineTo(sx + 4, sy - 2); ctx.fill(); } else { ctx.fillStyle = 'rgba(255,250,235,.6)'; ctx.fillRect(sx - 0.75, sy - 2, 1.5, sy0 - sy); }
     ctx.fillStyle = '#222'; ctx.textAlign = 'center'; ctx.fillText(text, sx, sy - 7);
   }
-  if (w.over) { ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(0, innerHeight / 2 - 40, innerWidth, 80); ctx.fillStyle = '#fff'; ctx.font = 'bold 22px system-ui'; ctx.textAlign = 'center'; ctx.fillText(w.over === 'wiped' ? 'The company is dead.' : 'The company is bankrupt.', innerWidth / 2, innerHeight / 2 + 8); }
+  gameOverCard();
 }
+/** Game over (v1.2.1): the world has stopped; say why, plainly, and offer the way out. */
+let goShown = '';
+function gameOverCard(): void {
+  const key = w.over ? w.over + w.seed + ':' + w.tick : '';
+  if (key === goShown) return; goShown = key;
+  $('gameover').classList.toggle('open', !!w.over); if (!w.over) return;
+  $('gotitle').textContent = w.over === 'wiped' ? 'The company is dead.' : 'The company is bankrupt.';
+  $('gotext').textContent = (w.over === 'wiped' ? `Every man is gone by day ${dayOf(w.tick)}.` : `The money ran out on day ${dayOf(w.tick)}.`) + ` ${w.stats.birdKills} Roukha killed, ${w.stats.deaths} men lost, profit ${Math.round(w.ledger.income - w.ledger.spending)} cr.`;
+}
+$('gonew').addEventListener('click', () => { try { localStorage.removeItem(SAVE_KEY); } catch { /* storage blocked */ } newWorld(((w.seed * 7919 + 1) >>> 0) % 100000 || 1); });
 const MAN_SCALE = 1.4;  // men drawn a bit larger than life so they read on a phone
 /** A scout as a small top-down man: shoulders in squad colour, head, hat (squad shape) and a rifle. */
 function drawMan(s: Scout, x: number, y: number): void {
@@ -472,13 +496,22 @@ function circle(x: number, y: number, r: number, fill = true): void { ctx.beginP
 function ellipse(x: number, y: number, rx: number, ry: number, a: number): void { ctx.beginPath(); ctx.ellipse(x, y, rx, ry, a, 0, Math.PI * 2); ctx.fill(); }
 function label(t: string, x: number, y: number, col: string, size: number): void { ctx.save(); ctx.font = `${size}px -apple-system, system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.lineWidth = size * 0.18; ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.strokeText(t, x, y); ctx.fillStyle = col; ctx.fillText(t, x, y); ctx.restore(); }
 const placed: [number, number, number, number][] = [];
+// v1.2.1 label stability: each label remembers the slot it used last frame and tries it first (and keeps it a few
+// frames after it is no longer needed), so labels don't hop between slots every frame as men move past each other
+const SLOTS = [0, -1, 1, -2];
+const lastSlot = new Map<string, { k: number; hold: number }>();
 /** Screen-space label that steps aside (up, then down) instead of overlapping one already drawn; skipped if no room. */
-function placeLabel(t: string, x: number, y: number, col: string, px: number): void {
+function placeLabel(t: string, x: number, y: number, col: string, px: number, key = t): void {
   ctx.font = `${px}px -apple-system, system-ui, sans-serif`; const wdt = ctx.measureText(t).width + 4, h = px + 2;
-  for (const dy of [0, -h, h, -2 * h]) {
-    const yy = y + dy; if (placed.some((r) => Math.abs(r[0] - x) < (r[2] + wdt) / 2 && Math.abs(r[1] - yy) < (r[3] + h) / 2)) continue;
-    placed.push([x, yy, wdt, h]); ctx.textAlign = 'center'; ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.strokeText(t, x, yy); ctx.fillStyle = col; ctx.fillText(t, x, yy); return;
-  }
+  const prev = lastSlot.get(key);
+  const free = (k: number): boolean => { const yy = y + SLOTS[k] * h; return !placed.some((r) => Math.abs(r[0] - x) < (r[2] + wdt) / 2 && Math.abs(r[1] - yy) < (r[3] + h) / 2); };
+  let k = -1;
+  if (prev && prev.k > 0 && prev.hold > 0 && free(prev.k)) { k = prev.k; prev.hold--; }   // sticky: stay stepped aside a moment
+  else for (let i = 0; i < SLOTS.length; i++) if (free(i)) { k = i; break; }
+  if (k < 0) return;
+  if (!prev || prev.k !== k) lastSlot.set(key, { k, hold: 20 }); else if (k === 0) prev.hold = 20;
+  const yy = y + SLOTS[k] * h;
+  placed.push([x, yy, wdt, h]); ctx.textAlign = 'center'; ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.strokeText(t, x, yy); ctx.fillStyle = col; ctx.fillText(t, x, yy);
 }
 function roundRect(x: number, y: number, ww: number, hh: number, r: number): void { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + ww, y, x + ww, y + hh, r); ctx.arcTo(x + ww, y + hh, x, y + hh, r); ctx.arcTo(x, y + hh, x, y, r); ctx.arcTo(x, y, x + ww, y, r); ctx.closePath(); }
 

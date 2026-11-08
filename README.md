@@ -1,4 +1,4 @@
-# Beaks and Blood: Tabe Pocket (v1.2 sim)
+# Beaks and Blood: Tabe Pocket (v1.2.1 sim)
 
 An autonomous colony sim. A small company of scouts lands on the beach of Tabe island. They set up camp, keep the fire going, forage and cook, hunt the Roukha (big, dangerous flightless birds) for their beaks, survive night raids, and sell beaks to the trader's boat every 3-4 days. **Nobody controls them.** You watch. Player controls come after v1.
 
@@ -35,6 +35,8 @@ The live game is https://executiveactual.github.io/tabe-pocket/ once GitHub Page
 
 Screenshots (844×390 @2x, simulated iPhone insets 47/0/47/21) are in `shots/`:
 - v1.2:
+  - `v1_2_1-gameover.png`: the game-over card ("The company is dead.", the day, kills, losses, profit, Start a new company); `v1_2_1-newcompany.png` is the result of tapping it
+  - `v1_2_1-noon.png`, `v1_2_1-night.png`: camp at noon and at 22:00; `v1_2_1-pack.png`: a charging pack with its label on the birds; `v1_2_1-fight.png`: a night fight with the boss's tap card
   - `v1_2-muster.png`: the north nest calling a hunt, "mustering 5/6" (designer `reveal=1` view: nobody is near the nest)
   - `v1_2-firing.png`: mid-fight: men crouched, aiming (aim lines, rings), a muzzle flash, a man working the bolt, and a pack charging a man into hand-to-hand
   - `v1_2-retreat.png`: a beaten pack retreating to its nest ("retreating (5) · fear 92")
@@ -182,7 +184,11 @@ These exist only as data and doc notes, or as inert groundwork behind `FEATURES`
 
 ## Known tuning notes
 - Danger (v1.2): about 1 run in 6 loses a man over 20 days and about 1 in 30 is wiped out. There are no replacements yet, so a camp that loses two or three men can spiral. Knobs: `PACK_SATED_DOWNS`, `DOWN_WOUND`, `MORTAL_WOUND`, `PECK_EVERY`, `MAX_ON_ONE`, `BIRD_TOUGH`, `FEAR.breakAt`, `HUNT_PACK`, `RAID_CALM_H`, `MAX_HUNTS_OUT`.
-- Every hunt call so far succeeds (birds at home are rarely busy enough to refuse), and most seeds see their first hunt on day 3 at 15:00 from the same nest.
+- There are no replacements yet. A camp left with 1-2 men dies on its first night, or within days with 3. Game over is immediate, and the viewer shows a card with a "Start a new company" button (v1.2.1).
+- Every hunt call so far succeeds. This is by design, not a bug: a hunt is only called with 4 or more healthy birds at home, and home jobs are short. Most seeds see their first hunt on day 3 at 15:00 from the same nest.
+- Scouts never reach the nests (335-347 m out). Exploring and Roukha hunts stop at 160 m (`EXPLORE_MAX_M`), so nest defences stay at 0 until something sends men farther out.
+- The oscillation monitor is near 0 since v1.2.1. What is left is mostly men re-entering a fight, which is legitimate.
+- Extension seams for orders, inventories, structures and factions are described in `docs/EXTENDING.md`.
 - Many headshots crack beaks.
 - Profit varies a lot between seeds: it depends on how close the first birds come.
 - Trees are re-grown at load from a fixed salt rather than stored in the map file. Hand edits to the map change terrain only.

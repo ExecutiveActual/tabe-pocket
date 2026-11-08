@@ -220,7 +220,7 @@ export function tickMorale(w: World, s: Scout): void {
 
 // ---------- scoring helpers ----------
 const urg = (v: number, seek: number): number => urgency(v, seek, CFG.NEED_URGENT);   // shared needs module
-function foodAvailable(w: World, s: Scout): Item | '' {
+export function foodAvailable(w: World, s: Scout): Item | '' {
   for (const k of CFG.EAT_PREF) if (invGet(s.carry, k) >= 1) return k;
   if (!w.camp.sited) return '';
   for (const k of CFG.EAT_PREF) if (stock(w, k) >= 1) return k;
@@ -281,6 +281,7 @@ export function decide(w: World, s: Scout): void {
     else if (dark && h < 21 && s.needs.rest > 30) sc = 0.9 + (h - 19.5);          // evening: supper and a smoke first
     else if (dark && s.needs.rest < 92) sc = 3 + (100 - s.needs.rest) / 50;
     else if (per === 'evening' && h >= 20.5 && s.needs.rest < 80) sc = 1.5;
+    else if (s.needs.rest < CFG.NEED_URGENT / 2) sc = 3 + (100 - s.needs.rest) / 50;   // v1.2.1: exhausted (the level that interrupts work): he sleeps, day or not
     else if (s.needs.rest < 20) sc = 2.5;
     if (sc > 0 && s.needs.food < CFG.NEED_SEEK.food && s.needs.rest > CFG.NEED_URGENT / 2 && foodAvailable(w, s)) sc = Math.min(sc, CFG.SUPPER_FIRST);   // v1.2: a hungry man eats before he turns in
     if (sc > 0 && !alert) cands.push({ score: sc + jitter(), why: 'tired', make: () => sleepAct(w, s) });
@@ -377,7 +378,7 @@ function block(w: World, g: Goal, reason: string, hours: number, s: Scout, bark?
   if (bark && (w.plan.warned[key] || 0) < w.tick) { w.plan.warned[key] = w.tick + 4 * TPH(); say(w, s, bark, {}, 'warn'); }
   return null;
 }
-function drinkAct(w: World, s: Scout): Act | null {
+export function drinkAct(w: World, s: Scout): Act | null {
   const pt = nearestWaterPt(w, s);
   const caskOk = w.camp.sited && stock(w, 'water') >= 1;
   const dCask = caskOk ? dist(s.x, s.y, w.camp.cask.x, w.camp.cask.y) : 1e9;
@@ -417,6 +418,17 @@ function freeHands(w: World, s: Scout): number { return w.scouts.filter((x) => x
 
 /** A standable spot near (x,y). */
 function sp(w: World, x: number, y: number): [number, number] { return nearestPassable(w, x, y, 4) || [x, y]; }
+// ---------- extension seams (v1.2.1; empty in v1.2.x, so behaviour is unchanged) ----------
+/** Adds a goal to the commander's plan this tick (same rules as the built-in ones: pri <= 0 or slots <= 0 is ignored). */
+export type AddGoal = (id: string, kind: string, pri: number, slots: number, label: string, target?: number) => void;
+/** A source of goals beyond the built-in camp plan: player orders (build/zone/hunt with a 1-5 priority), structures,
+ *  a faction's demands. Called by planTick() after the built-in goals, in array order (keep it deterministic). */
+export type GoalSource = (w: World, add: AddGoal) => void;
+export const GOAL_SOURCES: GoalSource[] = [];
+/** Turns a goal of a new kind into an act for one man (return null when he can't take it). Built-in kinds win. */
+export type JobMaker = (w: World, s: Scout, g: Goal) => Act | null;
+export const JOB_MAKERS: Record<string, JobMaker> = {};
+
 function makeJob(w: World, s: Scout, g: Goal): Act | null {
   const [cx, cy] = campXY(w);
   const far = (x: number, y: number): boolean => dist(x, y, cx, cy) > SPECIES.scout.home.safeR;
@@ -546,7 +558,8 @@ function makeJob(w: World, s: Scout, g: Goal): Act | null {
       return mkAct(g.kind, g.kind === 'rescue' ? 'Rescuing ' + v.name : 'Treating ' + v.name, g.id, v.x, v.y, { target: v.id });
     }
   }
-  return null;
+  const ext = JOB_MAKERS[g.kind];
+  return ext ? ext(w, s, g) : null;
 }
 
 /** An unexplored tile next to explored ground, within range of camp. */
@@ -1020,6 +1033,7 @@ export function planTick(w: World): void {
   }
   const blockedForKnowledge = G.some((g) => g.blockedUntil > w.tick && /No |known|seen/.test(g.reason));
   if (w.camp.sited) add('explore', 'explore', blockedForKnowledge ? 1.5 : 0.75, 2, 'Explore the island');
+  for (const src of GOAL_SOURCES) src(w, add);   // extension seam: orders, structures, factions (none in v1.2.x)
   w.plan.goals = G.sort((a, b) => b.pri - a.pri);
   watchTick(w, c);
 }

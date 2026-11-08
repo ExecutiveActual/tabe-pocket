@@ -12,7 +12,7 @@ import { comfort, unease, groupNeededAt } from '../src/sim/agent/home';
 import { urgency, decayNeeds, chooseBest } from '../src/sim/agent/needs';
 import { answerRequest, rallyVerdict, collectAnswers, type Answerer, type RequestState } from '../src/sim/agent/request';
 
-const until = (w: World, t: number): void => { while (w.tick < t) step(w); };
+const until = (w: World, t: number): void => { while (w.tick < t && !w.over) step(w); };   // (a finished world stops ticking)
 function staged(seed = 3, opts = { noRoukha: true, noBoat: true }): World {
   const w = createWorld(seed, opts); until(w, tickAt(2, 10));
   w.scouts.forEach((s, i) => { endAct(w, s); s.status = 'ok'; s.sleeping = false; s.promise = -1; s.combat = false; for (const k of Object.keys(s.needs) as (keyof typeof s.needs)[]) s.needs[k] = 90; const [x, y] = fireSeat(w, s, 10 + i); s.x = x; s.y = y; });

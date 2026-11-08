@@ -7,9 +7,9 @@ import { CFG, SPECIES, FEATURES, NAMES, TRAIT_PAIRS, TRAITS_PER_SCOUT, NEED_IDS,
 import {
   World, Scout, Inv, T, rnd, rint, pick, dist, clamp, TPH, hourOf, dayOf, genTerrain, carveWater, tileCenter,
   PASSABLE, addLog, invAdd, invGet, newId, nearestPassable, needsFull, tileOf, DayReport, tfx,
-  funds, payCash, payHome, receive, MAP_CHARS, isDark,
+  funds, payCash, payHome, receive, MAP_CHARS, isDark, Command,
 } from './core';
-import { fallSick, commander, campAlert, able, decide, runAct, endAct, planTick, tickNeeds, tickMorale, campXY, fireLit, built, stock, cargoValue, orderCost, say, chainOrder, foodPoints } from './ai';
+import { fallSick, commander, campAlert, able, decide, runAct, endAct, planTick, tickNeeds, tickMorale, campXY, fireLit, built, stock, cargoValue, orderCost, say, chainOrder, foodPoints, foodAvailable, drinkAct } from './ai';
 import { perceive, combatTick, tickBullets, tickDowned } from './combat';
 import { directorTick, wildTick, deerTick, initNests } from './wild';
 import { pocketTick } from './pocket';
@@ -191,11 +191,19 @@ export type CommandKind =
 export function issueCommand(w: World, player: string, kind: CommandKind, args: Record<string, number | string>, atTick = w.tick): void {
   w.commands.push({ tick: atTick, player, kind, args });
 }
+/** Extension seam (v1.2.1): a handler per command kind, applied in canonical order on its tick. None in v1.2.x:
+ *  an order with no handler is logged and ignored, as before. An orders layer registers e.g. COMMAND_HANDLERS.buildHere
+ *  to record the order in world state, and a GoalSource (ai.ts GOAL_SOURCES) to turn standing orders into goals. */
+export type CommandHandler = (w: World, c: Command) => void;
+export const COMMAND_HANDLERS: Partial<Record<CommandKind, CommandHandler>> = {};
 function applyCommands(w: World): void {
   if (!w.commands.length) return;
   const due = w.commands.filter((c) => c.tick <= w.tick).sort((a, b) => a.tick - b.tick || (a.player < b.player ? -1 : a.player > b.player ? 1 : 0));
   w.commands = w.commands.filter((c) => c.tick > w.tick);
-  for (const c of due) addLog(w, 'Orders', `${c.player}: '${c.kind}' received (player orders are not wired up yet)`, 'event');
+  for (const c of due) {
+    const h = COMMAND_HANDLERS[c.kind as CommandKind];
+    if (h) h(w, c); else addLog(w, 'Orders', `${c.player}: '${c.kind}' received (player orders are not wired up yet)`, 'event');
+  }
 }
 
 // ---------- the step ----------
@@ -228,6 +236,8 @@ export function step(w: World): void {
       s.act = null;
     }
   }
+  // game over the moment the last man is gone (v1.2.1; was checked only at 06:00, so a wiped camp ran on for up to a day)
+  if (!w.over && w.scouts.every((s) => s.status === 'dead')) { w.over = 'wiped'; addLog(w, 'Ledger', 'the whole company is dead. Game over.', 'event'); }
   if (w.tick % CFG.DECIDE_EVERY === 0) teamTick(w);
   gatherTick(w);
   if (w.camp.fire.built && w.camp.fire.fuel > 0) {
@@ -240,6 +250,7 @@ export function step(w: World): void {
   w.tick++;
 }
 
+const NOT_AT_BEDTIME = ['eat', 'drink', 'sleep', 'warm', 'unpack', 'treat', 'meetBoat'];
 function maybeInterrupt(w: World, s: Scout, h: number): void {
   const a = s.act!;
   // the trader is in and the boss is off on something else (a buddy job, a chore): he drops it and goes
@@ -249,9 +260,20 @@ function maybeInterrupt(w: World, s: Scout, h: number): void {
   // the camp is under attack: sleepers near the fire get up
   if (a.kind === 'sleep' && campAlert(w) && dist(s.x, s.y, w.camp.x, w.camp.y) < CFG.ALERT_M + 20) { endAct(w, s, 'alarm'); return; }
   if (a.kind === 'watch' || a.kind === 'rescue' || a.kind === 'combat' || a.kind === 'buddy' || (a.team && a.team.phase === 'go' && a.team.crew.length > 0)) return;
-  const urgent = (s.needs.food < CFG.NEED_URGENT && a.kind !== 'eat') || (s.needs.water < CFG.NEED_URGENT && a.kind !== 'drink') || (s.needs.rest < CFG.NEED_URGENT / 2 && a.kind !== 'sleep');
-  if (urgent && !a.urgent) { endAct(w, s, 'urgent need'); return; }
-  const lateNight = (h >= 21 || h < 4) && ['eat', 'drink', 'sleep', 'warm', 'unpack'].indexOf(a.kind) < 0;
+  // an urgent need interrupts work at once when it can be met right now (food in his hands or the stores, a water source).
+  // When it can't, he stops to rethink at most once an hour (CFG.NEED_RETHINK_H): ending the job every time only restarted
+  // it a moment later, over and over (v1.2.1 flip-flop fix), but he still has to drop the woodpile and go find food.
+  // (the boss on his way to the boat finishes the trade first: decide() would send him straight back to it; a man
+  // eating or drinking finishes his grub before he turns in)
+  if (a.kind !== 'meetBoat' && !a.urgent) {
+    const hungry = s.needs.food < CFG.NEED_URGENT && a.kind !== 'eat', thirsty = s.needs.water < CFG.NEED_URGENT && a.kind !== 'drink';
+    const now = (hungry && foodAvailable(w, s) !== '') || (thirsty && drinkAct(w, s) !== null) || (s.needs.rest < CFG.NEED_URGENT / 2 && a.kind !== 'sleep' && a.kind !== 'eat' && a.kind !== 'drink');
+    if (now) { endAct(w, s, 'urgent need'); return; }
+    if ((hungry || thirsty) && (s.cool['needRethink'] || 0) <= w.tick) { s.cool['needRethink'] = w.tick + CFG.NEED_RETHINK_H * TPH(); endAct(w, s, 'urgent need'); return; }
+  }
+  // bedtime ends day work, but not patching a man up or the boss's boat trade (decide() picks those straight back up, so ending
+  // them only made men flip back and forth all night; v1.2.1)
+  const lateNight = (h >= 21 || h < 4) && NOT_AT_BEDTIME.indexOf(a.kind) < 0;
   if (lateNight && s.needs.rest < 92) endAct(w, s, 'bedtime');
 }
 
@@ -316,11 +338,14 @@ function hourly(w: World): void {
   const live = w.scouts.filter((s) => s.status !== 'dead');
   for (const a of live) for (const b of live) if (a.id < b.id && dist(a.x, a.y, b.x, b.y) < CFG.TOGETHER_M) { a.together[b.id] = (a.together[b.id] || 0) + 1; b.together[a.id] = (b.together[a.id] || 0) + 1; }
   for (const s of live) s.grief = Math.max(0, s.grief - CFG.MORALE_DEATH_DECAY_H);
+  // housekeeping (v1.2.1): expired per-goal cooldowns go (goal ids include carcass and scout ids, so they piled up in saves),
+  // and the monitor notes keep only the latest MON_NOTES_MAX
+  for (const s of w.scouts) for (const k in s.cool) if (k.startsWith('goal:') && s.cool[k] <= w.tick) delete s.cool[k];
+  if (w.stats.mon.notes.length > CFG.MON_NOTES_MAX) w.stats.mon.notes.splice(0, w.stats.mon.notes.length - CFG.MON_NOTES_MAX);
   for (const s of w.scouts) if (s.status !== 'dead') { s.hist.push([w.tick, ...NEED_IDS.map((k) => Math.round(s.needs[k])), Math.round(s.morale), Math.round(s.stress)]); if (s.hist.length > 24 * 8) s.hist.shift(); }
   // game over: everyone dead, or bankrupt (debt past the limit for too long)
   if (h === 6) {
     if (funds(w) < (FEATURES.debt ? -CFG.DEBT_LIMIT : 0)) w.stats.debtDays++; else w.stats.debtDays = 0;
-    if (!w.over && w.scouts.every((s) => s.status === 'dead')) { w.over = 'wiped'; addLog(w, 'Ledger', 'the whole company is dead. Game over.', 'event'); }
     if (w.stats.debtDays >= (FEATURES.debt ? CFG.BANKRUPT_DAYS : CFG.BANKRUPT_DAYS_NO_DEBT) && !w.over) { w.over = 'bankrupt'; addLog(w, 'Ledger', 'the company is bankrupt. Game over.', 'event'); }
   }
   if (h === 21) dayReport(w);

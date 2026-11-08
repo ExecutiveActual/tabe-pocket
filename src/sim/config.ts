@@ -207,6 +207,7 @@ export const CFG = {
   LEISURE_MAX_SCORE: 3.0,     // leisure never outranks a pressing bodily need (food/water urgency goes higher)
   NEED_SEEK: { food: 55, water: 55, rest: 35, warmth: 55, social: 60, fitness: 65 } as Record<NeedId, number>,  // starts wanting it below this
   NEED_URGENT: 22,             // below this a need interrupts work
+  NEED_RETHINK_H: 1,           // PLACEHOLDER v1.2.1: an urgent need he can't meet right now (no food in camp) makes him rethink his job at most this often
   NEED_REPORT_MIN: 20,         // daily report: every scout should end the day above this
   SLEEP_GAIN_H: 12.5,
   WARMTH_COLD_LOSS_H: 6,       // warmth lost per hour at night / in rain away from fire or tent
@@ -272,6 +273,7 @@ export const CFG = {
   WATER_PER_UNIT: 30,
   ACT_COMMIT_BONUS: 0.6,       // stickiness so they don't flip between activities
   DECIDE_EVERY: 10,            // ticks between re-evaluating (only for interruptible stuff)
+  MON_NOTES_MAX: 200,          // monitor notes kept in the world (and its saves); older ones drop off
   IDLE_LIMIT_S: 20,            // test bound: no idling longer than this with open goals
 
   // ---- Leisure, social and training: each is a data entry ----

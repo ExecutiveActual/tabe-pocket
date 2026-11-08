@@ -6,7 +6,7 @@ import { invAdd, invGet, dayOf, dist } from '../src/sim/core';
 import { commander, chainOrder, campAlert } from '../src/sim/ai';
 import { hurt } from '../src/sim/ai';
 
-const until = (w: ReturnType<typeof createWorld>, t: number): void => { while (w.tick < t) step(w); };
+const until = (w: ReturnType<typeof createWorld>, t: number): void => { while (w.tick < t && !w.over) step(w); };   // (a finished world stops ticking)
 
 describe('determinism', () => {
   it('same seed gives the same world hash after a day', () => {

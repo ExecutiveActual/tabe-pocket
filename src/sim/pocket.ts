@@ -12,7 +12,10 @@ const F = (k: Item): { pts: number; spoils: boolean } => FOOD[k] || { pts: 0, sp
 export function pocketPts(s: Scout): number { let p = 0; for (const k in s.pocket) p += (s.pocket[k as Item] || 0) * (FOOD[k as Item]?.pts || 0); return p; }
 function outsideAct(w: World, s: Scout): boolean {
   const a = s.act; if (!a || a.kind === 'combat' || a.kind === 'rescue' || a.kind === 'sleep') return false;
-  const [cx, cy] = campXY(w); return dist(a.tx, a.ty, cx, cy) > SAFE();
+  // a follower's own act points at where his leader stood when he joined (in camp): the trip is the leader's job (v1.2.1 fix)
+  let t = a;
+  if (a.kind === 'buddy') { const L = w.scouts.find((o) => o.id === a.leader); if (L && L.act && L.act.kind !== 'buddy') t = L.act; }
+  const [cx, cy] = campXY(w); return dist(t.tx, t.ty, cx, cy) > SAFE();
 }
 /** Take food for the trip from the stores: non-spoiling only, preferred kinds first, up to POCKET_PTS. */
 function storePts(w: World): number { let p = 0; for (const k in FOOD) if (FOOD[k as Item]!.edible) p += invGet(w.camp.stock, k as Item) * F(k as Item).pts; return p; }
@@ -26,6 +29,7 @@ export function packPocket(w: World, s: Scout): number {
   }
   return took;
 }
+function carriesFood(s: Scout): boolean { return CFG.EAT_PREF.some((k) => invGet(s.carry, k) >= 1); }
 export function emptyPocket(w: World, s: Scout): void { for (const k in s.pocket) { const n = s.pocket[k as Item] || 0; if (n > 0) invAdd(w.camp.stock, k as Item, n); } s.pocket = {}; }
 /** Per scout per tick (after the danger layer). Returns true while he is eating from his pocket (he stands still). */
 export function pocketTick(w: World, s: Scout): boolean {
@@ -36,6 +40,9 @@ export function pocketTick(w: World, s: Scout): boolean {
     if (--s.snackT > 0) return true;
     let ate = 0;
     for (const k of CFG.POCKET_PREF) while (invGet(s.pocket, k) >= 1 && s.needs.food + F(k).pts * 0.5 < 100) { invAdd(s.pocket, k, -1); s.needs.food = Math.min(100, s.needs.food + F(k).pts); ate += F(k).pts; invAdd(w.stats.eaten, k, 1); }
+    // starving with nothing left in the pocket: he eats some of what he is carrying home (v1.2.1: men starved to 0 out on a
+    // team trip with an armful of berries, since a team out in the field is never interrupted for food)
+    if (s.needs.food < CFG.NEED_URGENT) for (const k of CFG.EAT_PREF) while (invGet(s.carry, k) >= 1 && s.needs.food < CFG.NEED_SEEK.food) { invAdd(s.carry, k, -1); s.needs.food = Math.min(100, s.needs.food + F(k).pts); ate += F(k).pts; invAdd(w.stats.eaten, k, 1); }
     if (ate > 0) { w.stats.pocketMeals++; w.stats.pocketPts += ate; }
     return false;
   }
@@ -47,8 +54,8 @@ export function pocketTick(w: World, s: Scout): boolean {
     return false;
   }
   // outside: a quiet, hungry moment -> eat from the pocket
-  if (s.needs.food < CFG.NEED_SEEK.food && pocketPts(s) > 0 && !s.combat && s.carcassMode !== 'drag' && !s.sleeping && (w.tick + s.id) % 5 === 0) {
-    s.snackT = CFG.SNACK_TICKS; say(w, s, 'pocketEat'); s.thought = 'Eating from my pocket';
+  if (s.needs.food < CFG.NEED_SEEK.food && (pocketPts(s) > 0 || (s.needs.food < CFG.NEED_URGENT && carriesFood(s))) && !s.combat && s.carcassMode !== 'drag' && !s.sleeping && (w.tick + s.id) % 5 === 0) {
+    s.snackT = CFG.SNACK_TICKS; say(w, s, 'pocketEat'); s.thought = pocketPts(s) > 0 ? 'Eating from my pocket' : 'Starving: eating what I carry';
     return true;
   }
   return false;

@@ -1,5 +1,59 @@
 # Changelog
 
+## 1.2.1 - 2026-11-08
+A stability pass before the next expansion. No new game features. The sim is still deterministic, every invented number is still marked PLACEHOLDER, and the v1.2 save key is unchanged (v1.2 saves still resume).
+
+### Fixed
+- **Flip-flops** (the oscillation monitor: 60 in the 30-seed soak, now 0). Men were stopped and restarted on the same job every few seconds. The causes:
+  - **Urgent hunger or thirst with nothing to eat or drink:** the job was ended, then picked again straight away. Now an urgent need interrupts work at once only when it can be met right now. Otherwise he rethinks his job at most once an hour (`NEED_RETHINK_H`).
+  - **Bedtime ended jobs that outrank sleep:** treating a man and the boss's boat trade were ended and then picked straight back up. Bedtime now leaves them alone (`NOT_AT_BEDTIME`).
+  - **The boss's boat trip** is no longer cut short by an urgent need, and an exhausted man finishes eating or drinking before he turns in.
+  - **Exhausted men by day:** they were pulled off every job but never chose to sleep. Now a man below the exhaustion line sleeps, day or night.
+- **Game over** now comes on the tick the last man dies. It was only checked at 06:00, so a wiped camp ran on for up to a game day. The viewer shows a game-over card with the reason, the day, kills, losses and profit, and a "Start a new company" button.
+- **Pocket rations for followers:** a man going out as a mate on a team trip never packed food, because the check used his own act target, which is in camp. He now packs food when the trip goes outside. Pocket meals are up about 50%.
+- **Starving on a trip:** a man starving out on a team trip now eats from what he carries. Before, he could reach 0 food holding an armful of berries.
+- **Save growth:** monitor notes are capped (`MON_NOTES_MAX` 200), and expired per-goal cooldowns are pruned every hour.
+- **Viewer:**
+  - Labels keep their slot for a moment, so they stop jumping between frames.
+  - A pack's label follows its drawn birds (no drift).
+  - Bird visibility is computed once per frame.
+  - A `?day=`, `?hour=` or `?tick=` link past a game over no longer loops forever.
+
+### Checked, not bugs (no change)
+- **Every muster succeeds.** A hunt is only called with 4 or more healthy birds at home, home jobs are short, and a call is only cancelled if the leader's own job changes.
+- **Nests are never engaged.** The nests are 335-347 m out, but explorers stop at `EXPLORE_MAX_M` (160 m) and Roukha hunts only follow intel within 160 m. Scouts never get within `NEST_GUARD_M` (45 m) of a nest.
+- **The dead-scout spiral.** A camp left with 1-2 men dies on its first night, or within days with 3. It does so cleanly: no exceptions, frozen men or non-finite values (`scripts/audit.ts spiral`). It needs replacements, which are a design feature and not part of this pass.
+
+### Added (seams only: nothing is registered, so behaviour is unchanged)
+- `GOAL_SOURCES` and `JOB_MAKERS` in `ai.ts`, and `COMMAND_HANDLERS` in `world.ts`. These are where orders and jobs, structures and factions plug in. See `docs/EXTENDING.md`.
+- `tests/v121.test.ts` (7 tests, 51 in all). The test helpers stop at game over.
+- `scripts/audit.ts`: probes for oscillations, the spiral, save/load and performance.
+
+### Soak (`npm run soak -- 200 30 20`, seeds 200-229 × 20 days)
+| metric | 1.2.0 | 1.2.1 |
+|---|---|---|
+| camps alive at day 20 | 29/30 (25 with no deaths) | 27/30 (21 with no deaths) |
+| deaths / games over / downs | 10 / 1 / 85 | 20 / 3 / 96 |
+| kills/day, hit rate | 3.01, 58.0% | 2.88, 58.5% |
+| avg profit | 3293 | 2985 |
+| hunts (musters), called off | 700 (700), 0 | 641 (641), 0 |
+| pocket meals | 126 (0.21/day) | 173 (0.29/day) |
+| solo departures, deadlocks | 2.3%, 0 | 1.9%, 0 |
+| stuck / osc / exceptions | 1 / 60 / 0 | 0 / 0 / 0 |
+
+Deaths come mostly from rare wipe-outs (5 deaths each), so 30 seeds swing a lot. Over 190 seeds (this soak plus seeds 400-439, 500-539, 600-639 and 700-739, 20 days each):
+| metric | 1.2.0 | 1.2.1 |
+|---|---|---|
+| deaths / games over | 64 / 9 | 66 / 8 |
+| scouts downed | 539 | 570 (+6%) |
+| oscillations | 236 | 31 |
+| stuck / exceptions | 7 / 0 | 5 / 0 |
+| pocket meals | 769 | 1145 |
+| avg kills/day, avg profit | 2.93, 3283 | 2.91, 3219 |
+
+Performance: about 25 µs per sim tick on the big island, so 16x speed costs about 4 ms per real second. Save/load: 36 checkpoints, 0 mismatches.
+
+
 ## 1.2.0 - 2026-11-08
 Shared AI modules, Roukha nests and hunting packs, fear and retreat, a readable firing sequence, food points and pocket rations, and danger tuning. The sim is still deterministic (seeded, fixed 10 Hz). Every invented number is marked PLACEHOLDER in `src/sim/config.ts`.
 

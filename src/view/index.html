@@ -42,6 +42,9 @@ input{width:110px;font-size:15px;padding:7px;border-radius:8px;border:1px solid 
 #rotate{display:none;position:fixed;left:50%;transform:translateX(-50%);top:calc(var(--mt) + 44px);background:#000a;padding:4px 10px;border-radius:10px;font-size:12px;pointer-events:none}
 body.card-open #logwrap,body.card-open #logchip{display:none!important}
 #insetdbg{position:fixed;inset:0;pointer-events:none;display:none}
+/* game over: a clear card in the middle with the way out (a new company) */
+#gameover{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:30;display:none;background:#1b2027f5;border:1px solid #6a4a4a;border-radius:16px;padding:16px 20px;text-align:center;max-width:calc(100vw - var(--ml) - var(--mr));box-shadow:0 8px 28px #000c}
+#gameover.open{display:block}#gameover h3{margin:0 0 6px;font-size:20px}#gameover p{margin:4px 0 12px;font-size:13px;opacity:.85}
 @media (orientation: portrait){#rotate{display:block}#ctl{top:auto;bottom:var(--mb);transform:none}#panel{bottom:calc(var(--mb) + 52px);right:calc(var(--mr) + 64px)}#logchip{max-width:calc(100vw - 110px)}}
 @media (orientation: landscape){
   #panel{right:auto;top:var(--mt);bottom:var(--mb);width:38vw;max-height:none}
@@ -55,6 +58,7 @@ body.card-open #logwrap,body.card-open #logchip{display:none!important}
 <div id="logwrap"><div id="log"></div></div>
 <div id="panel"><button id="closepanel">✕</button><div id="pbody"></div></div>
 <div id="ctl"><button id="speedbtn">1x</button><button id="viewbtn" title="View">🎯</button><button id="menubtn" title="Company">☰</button></div>
+<div id="gameover"><h3 id="gotitle"></h3><p id="gotext"></p><button id="gonew">Start a new company</button></div>
 <div id="insetdbg"></div>
 <script>/*BUNDLE*/</script>
 </body></html>

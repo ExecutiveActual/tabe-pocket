@@ -1,5 +1,65 @@
 # Changelog
 
+## 1.1.0 - 2026-11-08
+A stability and quality pass, plus teams and the big island. The sim stays deterministic (seeded, fixed 10 Hz).
+
+### Added
+- **The big pre-baked island:** 768×768 tiles at 2 m, about 1.5 km across.
+  - Source of truth: `data/maps/tabe_big.txt`, hand-editable.
+  - The build embeds `data/tabe_big.packed.json`: run-length plus base64, about 32 KB.
+  - Terrain: outback, hills, cliffs, mangroves, jungle clearings, 14 streams, 14 ponds, 6 rookeries. The landing coast keeps the v1 layout.
+  - Scripts: `map:gen`, `map:pack`, `map:png`.
+- **Help requests and teams** (`src/sim/team.ts`):
+  - Outside the camp perimeter, work is done by 2 men, or 3 for a big bird.
+  - A mate answers "right behind you" (drops his job), "gimme a sec" (finishes first; the asker waits) or "help me with this first" (the asker pitches in on his camp job, then they go).
+  - Teams link up in camp, travel together, and walk home together.
+  - Barks go to bubbles and the log.
+  - Fallbacks: go smaller; go solo only on short, safe daytime jobs; otherwise cancel with a cooldown. A safety net cancels any stuck team.
+- **Bird looting is a team-only job** at high priority (`LOOT_BIRD_PRI` 2.7, below rescue and the boat).
+  - More men on the rope haul faster.
+  - Haulers drop the rope the instant they fight, then pick it back up.
+  - A man who drops out to fight stays on his team, and the leader holds for him.
+  - If the whole team is lost out there, the job is abandoned and the bird is left on the ground.
+- **Joint work in camp:** mates lend a hand on building, cooking, smoking, butchering, scraping and chopping.
+  - Work multipliers 1.6 / 1.95 / 2.15 with 1-3 helpers, plus a quality bonus (meal value, meat yield).
+  - All numbers are PLACEHOLDER data in `config.ts`.
+- **Scout speed** ×1.25 (`SCOUT_SPEED_MUL`, PLACEHOLDER).
+- **Sight = fog:** a scout reveals his whole sight radius, and `canSee` refuses fog tiles. Nothing in the fog is shot.
+- **Phone UI:**
+  - safe-area insets plus extra top and bottom margins;
+  - a compact HUD chip that expands;
+  - a collapsible log chip;
+  - speed, view and menu buttons at the right-hand middle;
+  - a reusable popup-menu component (`src/view/ui.ts`).
+  - Labels are de-conflicted in screen space, and bubbles stack.
+  - Teams forming show "need N more", with rally lines and visible ropes.
+- **Render interpolation:** position and facing are blended between sim steps, with the same 10 Hz sim.
+- **Chunked, cached terrain and fog rendering** (64×64-tile chunks), drawing only what is visible.
+- **Compact saves:**
+  - terrain is omitted;
+  - the explored mask is run-length packed;
+  - trees, bushes and fish are stored as diffs from the pristine island.
+  - The save key is now `tabe-pocket-save-v1.1`.
+- `docs/SCOUT_INTENT.md`: what the scouts are meant to be doing, in plain English.
+- `scripts/soak_report.ts` (`npm run soak`) and `scripts/shots.mjs` (844×390 screenshots with simulated insets).
+- Tests: 11 new scenario tests (`tests/teams.test.ts`), and team, fog and drag checks in the soak suite. 30 tests in total, all passing.
+
+### Fixed
+- A dawn sleep/wake flip-flop.
+- The boss restarting "meet the boat" while an order was pending.
+- Explore churn now that sight reveals the target at once: the target is pushed past the frontier and the job ends on arrival.
+- A bird is never carried off on another errand: ending the job puts it back on the ground. The boss finishes hauling with his team before going to the boat.
+
+### Soak, 30 seeds × 20 days (`npm run soak -- 200 30 20`)
+- **Survival:** 0 deaths, 0 games over, 2.52 kills/day.
+- **Requests:** 3780 help requests, 2830 departures.
+  - Full team 2630, smaller 172, solo 28 (1.0% of departures); 394 cancelled.
+  - The rest ended before leaving, e.g. a fight or the job vanished.
+- **Answers:** came now 2389, "gimme a sec" 957, "help me first" 567. Camp assists 3166.
+- **Waiting:** average buddy wait 0.43 game hours (about 11 s at 1x), max 1.6 h. **Deadlocks 0.**
+- **Alone:** 2.6% of time outside the perimeter was spent alone. Birds dragged alone: 0.0% of drag time. Shots into fog 0. Shots with a rope in hand 0.
+- **Monitors:** stuck 5, idle 0, oscillation 37 (spread across job kinds, about 1 per 16 seed-days), exceptions 0.
+
 ## 0.1.0 (v1) - 2026-11-08
 First playable, watch-only slice.
 

@@ -35,7 +35,7 @@ function hiddenPoint(w: World, minD: number): [number, number] | null {
     const i = ty * n + tx; if (!PASSABLE[w.map.terrain[i]]) continue;
     const [x, y] = tileCenter(w, i);
     if (dist(x, y, cx, cy) < minD) continue;
-    if (w.scouts.some((s) => s.status !== 'dead' && dist(s.x, s.y, x, y) < 95)) continue;
+    if (w.scouts.some((s) => s.status !== 'dead' && dist(s.x, s.y, x, y) < CFG.SPAWN_HIDE_M)) continue;
     return [x, y];
   }
   return null;

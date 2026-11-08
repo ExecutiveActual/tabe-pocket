@@ -22,6 +22,18 @@ export interface Act {
   urgent: boolean;         // started because a need was urgent
   needBuddy: boolean;      // far work: waits for a buddy before leaving
   mode: string;            // job-specific mode (e.g. 'drag' | 'head')
+  team?: Team | null;      // team state when this is an outside job (the leader's act)
+}
+/** A help request and the team it forms (v1.1). The leader's act owns it; followers run a 'buddy' act. */
+export interface Team {
+  need: number;            // men needed, counting the leader
+  urg: number;             // urgency of the request (compared with what others are doing)
+  crew: number[];          // followers who have joined
+  promised: number[];      // "gimme a sec": will come when their job is done
+  helpWith: number;        // "help me first": the leader is helping this man finish before they go
+  phase: 'rally' | 'go';
+  posted: number; waitT: number; asked: Record<number, number>; noun: string;
+  rx: number; ry: number;  // rally point (where the team links up)
 }
 
 export interface Thought { text: string; v: number }
@@ -39,6 +51,7 @@ export interface Scout {
   hist: number[][]; starts: number[]; joined: number; tag: string;
   lastMeal: number; lastDrink: number; stress: number; sick: number; cool: Record<string, number>; why: string; combatFlips: number[]; carcassMode: '' | 'drag'; clearT: number;
   sickKind: string; injuries: string[]; medicUntil: number; hangover: number; grief: number; together: Record<number, number>; homeBound: boolean; shipped: boolean;
+  promise: number;         // id of a leader he promised to join when his current job is done (-1 none)
 }
 
 export interface Deer { id: number; x: number; y: number; px: number; py: number; hp: number; herd: number; state: 'graze' | 'flee' | 'dead'; tx: number; ty: number; t: number }
@@ -88,11 +101,16 @@ export interface DayReport {
   day: number; scouts: { name: string; status: Status; end: Record<string, number>; min: Record<string, number>; thoughts: string[] }[];
   stock: Inv; credits: number; profit: number; alive: number;
 }
-export interface Monitors { stuck: number; idle: number; oscillation: number; lone: number; exceptions: number; notes: string[] }
+export interface Monitors { stuck: number; idle: number; oscillation: number; lone: number; exceptions: number; notes: string[]; fogShots?: number; dragShots?: number }
+/** Team / help-request counters (v1.1), read by the soak report. */
+export interface TeamStats {
+  requests: number; departed: number; full: number; smaller: number; solo: number; cancelled: number; waitTicks: number; maxWait: number;
+  now: number; promise: number; helpFirst: number; refused: number; assists: number; helpTicks: number; outsideTicks: number; soloOutsideTicks: number; deadlocks: number; dragTicks: number; dragAloneTicks: number;
+}
 export interface Stats {
   shots: number; hits: number; birdKills: number; deerKills: number; deaths: number; downs: number; rescues: number;
   charges: number; withdraws: number; roukhaHunts: number; seasonFees: number; beaksSold: number; debtDays: number; license: number; wages: number; packsSpawned: number; phantomWork: number; boatsDone: number; shotTicks: number[];
-  days: DayReport[]; mon: Monitors; dayMin: Record<number, Record<string, number>>; eaten: Inv; drank: number; leisure: Record<string, number>;
+  days: DayReport[]; mon: Monitors; team: TeamStats; dayMin: Record<number, Record<string, number>>; eaten: Inv; drank: number; leisure: Record<string, number>;
 }
 export interface Command { tick: number; player: string; kind: string; args: Record<string, number | string> }
 

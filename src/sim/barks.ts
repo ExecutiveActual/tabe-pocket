@@ -8,7 +8,8 @@ export type BarkKey =
   | 'eat' | 'hungryNoFood' | 'sleep' | 'wake' | 'watch' | 'watchAssign' | 'buddyAsk' | 'buddyYes' | 'noBuddy' | 'explore'
   | 'roukha' | 'charge' | 'reload' | 'jam' | 'melee' | 'downed' | 'rescue' | 'treat' | 'allClear' | 'kill' | 'drag' | 'headOnly'
   | 'sign' | 'call' | 'trail' | 'boat' | 'command' | 'build' | 'sick' | 'accident' | 'death' | 'timber' | 'bare' | 'social'
-  | 'socialFail' | 'maint' | 'lowMorale' | 'rum';
+  | 'socialFail' | 'maint' | 'lowMorale' | 'rum'
+  | 'teamAsk' | 'teamAsk3' | 'teamNow' | 'teamSec' | 'teamFirst' | 'teamGo' | 'teamSmaller' | 'teamSolo' | 'teamCancel' | 'assist' | 'ropeDrop';
 
 type Table = Partial<Record<Trait | 'any', string[]>>;
 export const BARKS: Record<BarkKey, Table> = {
@@ -61,6 +62,18 @@ export const BARKS: Record<BarkKey, Table> = {
   socialFail: { any: ['Nobody? Fine.', 'Suit yourselves.'], sociable: ["Nobody? You're a dull lot."] },
   maint: { any: ['Cleaning my rifle.', 'Oil and rag time.'], steadyHand: ['Cleaning the rifle. Twice.'] },
   rum: { any: ['Pass the rum.'], drinker: ['Rum. Finally, something sensible.'], teetotal: ["I'll have tea. Somebody has to stay sharp."] },
+  // ---- teams (v1.1). {x} = the job ("hauling that bird"), {n} = a name ----
+  teamAsk: { any: ['Need a hand {x}.', 'Who\'s free? Need a man {x}.', 'Somebody come {x} with me.'], loner: ['Need one man {x}. Quiet type preferred.'], sociable: ['Who wants a stroll? Need a hand {x}.'] },
+  teamAsk3: { any: ['Need two more {x}. Big one.', 'Two men with me {x}. Heavy work.'] },
+  teamNow: { any: ['Right behind you, {n}.', 'Coming, {n}.', 'On my way.'], sociable: ['Coming! Better than sitting here.'], loner: ['Fine. Coming.'] },
+  teamSec: { any: ['Gimme a sec, finishing the {x}.', 'Hold on, {n}, nearly done with the {x}.', 'Two minutes. Let me finish the {x}.'] },
+  teamFirst: { any: ['Give me a hand with the {x} first, {n}, then I\'m yours.', 'Help me finish the {x}, {n}. Then we go.'] },
+  teamGo: { any: ['Right, let\'s move.', 'All here. Off we go.', 'Stay close. Moving out.'], cautious: ['Moving out. Eyes open, keep spacing.'] },
+  teamSmaller: { any: ["Nobody else is coming. We'll go as we are.", 'Two will do. Let\'s go.'] },
+  teamSolo: { any: ["Nobody free. It's close, I'll go alone.", "Short trip. I'll manage on my own."] },
+  teamCancel: { any: ["Nobody free to come. I'll find closer work.", "Not going out there alone. Closer job, then."] },
+  assist: { any: ['Here, {n}, I\'ll take that end.', 'Give it here, {n}. Two hands are better.', 'Shove over, {n}, I\'ll help.'] },
+  ropeDrop: { any: ['Drop the rope! Rifles!', 'Leave the bird! Guns up!'] },
   lowMorale: { any: ['What are we even doing out here.', 'This island will be the death of us.'] },
 };
 

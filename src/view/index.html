@@ -1,0 +1,54 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="theme-color" content="#14181d">
+<title>Tabe Pocket: the scouts</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:#14181d;color:#eee;font:14px -apple-system,system-ui,sans-serif;overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none}
+#cv{position:fixed;inset:0;display:block}
+#top{position:fixed;left:0;right:0;top:0;padding:calc(env(safe-area-inset-top) + 6px) 10px 6px;background:linear-gradient(#000c,#0000);display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;pointer-events:none}
+#top b{font-size:15px}#top .dim{opacity:.75;font-size:12px}
+#ticker{position:fixed;left:8px;right:8px;top:calc(env(safe-area-inset-top) + 52px);font-size:12px;opacity:.85;text-shadow:0 1px 2px #000;pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#bar{position:fixed;left:0;right:0;bottom:0;padding:6px 8px calc(env(safe-area-inset-bottom) + 6px);display:flex;gap:6px;justify-content:center;background:linear-gradient(#0000,#000b)}
+button{background:#2a3038;color:#eee;border:1px solid #444b55;border-radius:10px;padding:9px 12px;font-size:15px;min-width:44px}
+button.on{background:#c8a24a;color:#111;border-color:#c8a24a}
+#panel{position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom) + 58px);max-height:58vh;overflow:auto;background:#1b2027ee;border-top:1px solid #444;padding:10px 12px;display:none;touch-action:pan-y}
+#panel.open{display:block}#closepanel{position:absolute;right:8px;top:6px;padding:4px 10px}
+.ph{font-size:17px}.rank{opacity:.75;font-size:13px}.tag{display:inline-block;background:#33404f;border-radius:8px;padding:2px 7px;margin:4px 4px 0 0;font-size:12px}.tag.bad{background:#5a2a2a}
+.row{margin-top:6px}.small{font-size:12px;opacity:.75}
+.needs{display:grid;grid-template-columns:1fr 1fr;gap:3px 12px;margin-top:8px}.needs div{display:flex;align-items:center;gap:6px;font-size:12px}
+.nl{width:48px;opacity:.8}.nv{width:24px;text-align:right}.bar{flex:1;height:8px;background:#333a44;border-radius:4px;overflow:hidden}.bar span{display:block;height:100%}
+.mood span{font-size:12px;margin-right:6px}.neg{color:#ff8a8a}.pos{color:#8adf8a}
+#chart{width:100%;height:auto;margin-top:8px;border-radius:6px}
+#logwrap{position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom) + 58px);height:40vh;background:#111418ee;display:none;border-top:1px solid #444}
+#logwrap.open{display:block}#log{height:100%;overflow:auto;padding:6px 10px;font-size:12px;touch-action:pan-y}
+.l{padding:1px 0}.l.bark{color:#cfc6a8}.l.event{color:#9fd0ff}.l.warn{color:#ffcf6a}.l.combat{color:#ff8a7a}.l.boat{color:#8aefc0}
+#menu{position:fixed;inset:calc(env(safe-area-inset-top) + 50px) 10px auto 10px;max-height:75vh;overflow:auto;background:#1b2027f5;border:1px solid #444;border-radius:12px;padding:12px;display:none;touch-action:pan-y}
+#menu.open{display:block}#menu div{margin:6px 0;font-size:13px}#menu input{width:110px;font-size:15px;padding:7px;border-radius:8px;border:1px solid #555;background:#111;color:#eee}
+#menu h3{margin:4px 0 8px}
+#top span{font-size:13px}
+#rotate{display:none;position:fixed;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top) + 74px);background:#000a;padding:4px 10px;border-radius:10px;font-size:12px;pointer-events:none}
+#log{font-size:12px}
+body.card-open #logwrap{display:none!important}
+@media (orientation: portrait){#rotate{display:block}}
+@media (orientation: landscape){
+  #top{padding:calc(env(safe-area-inset-top) + 4px) calc(env(safe-area-inset-right) + 70px) 4px calc(env(safe-area-inset-left) + 10px)}
+  #ticker{top:calc(env(safe-area-inset-top) + 30px);left:calc(env(safe-area-inset-left) + 10px);right:80px}
+  #bar{left:auto;top:0;bottom:0;right:0;width:calc(env(safe-area-inset-right) + 62px);flex-direction:column;justify-content:center;padding:4px calc(env(safe-area-inset-right) + 6px) 4px 6px;background:linear-gradient(90deg,#0000,#000b);gap:5px}
+  #bar button{padding:6px 4px;font-size:14px;min-width:50px}
+  #panel{left:0;right:auto;top:0;bottom:0;width:38vw;max-height:none;padding:calc(env(safe-area-inset-top) + 8px) 10px 10px calc(env(safe-area-inset-left) + 10px);border-top:none;border-right:1px solid #444}
+  #logwrap{left:calc(env(safe-area-inset-left) + 0px);right:auto;width:46vw;bottom:0;height:24vh;background:#111418cc}
+  #logwrap.big{height:60vh;width:60vw}
+  #menu{inset:calc(env(safe-area-inset-top) + 34px) 80px auto calc(env(safe-area-inset-left) + 10px);max-height:80vh}
+  #chart{max-height:110px}
+}
+</style></head><body>
+<canvas id="cv"></canvas>
+<div id="top"><b id="clock"></b><span class="dim" id="season"></span><span id="money"></span><span id="boat"></span><span id="food"></span><span id="ammo"></span></div>
+<div id="rotate">Turn your phone sideways for the best view</div>
+<div id="ticker"></div>
+<div id="panel"><button id="closepanel">✕</button><div id="pbody"></div></div>
+<div id="logwrap" class="open"><div id="log"></div></div>
+<div id="menu"><div id="stats"></div><hr><div>Island seed <input id="seed" inputmode="numeric"> <button id="newgame">New island</button></div><div class="small">Tap a scout to follow him. Drag to look around, pinch to zoom. The sim runs on your phone and autosaves every 30s.</div></div>
+<div id="bar"><button data-speed="0">⏸</button><button data-speed="1">1x</button><button data-speed="4">4x</button><button data-speed="16">16x</button><button id="follow" title="Follow the squad">🎯</button><button id="mapbtn" title="Map">🗺</button><button id="logbtn">📜</button><button id="menubtn">☰</button><button id="mute">🔇</button></div>
+<script>/*BUNDLE*/</script>
+</body></html>

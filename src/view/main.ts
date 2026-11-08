@@ -1,16 +1,19 @@
 // Tabe Pocket viewer: runs the deterministic sim live in the browser and draws it with Canvas 2D.
 // Phone-first: drag to pan, pinch to zoom, tap a scout for his panel. The sim never touches the DOM.
 import { createWorld, step, save, load, cashTarget } from '../sim/world';
-import { CFG, NEED_IDS, COMPANY_NAME, TRAIT_FX, SQUADS, FEATURES } from '../sim/config';
+import { CFG, SPECIES, NEED_IDS, COMPANY_NAME, TRAIT_FX, SQUADS, FEATURES } from '../sim/config';
 import { World, Scout, hourOf, dayOf, clockStr, isDark, T } from '../sim/core';
 import { chainOrder, commander, foodPoints, stock } from '../sim/ai';
 import { canSee } from '../sim/combat';
+import { pocketPts } from '../sim/pocket';
+import { packFear } from '../sim/wild';
 import { popup } from './ui';
 
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
 const cv = $('cv') as HTMLCanvasElement; const ctx = cv.getContext('2d')!;
-const SAVE_KEY = 'tabe-pocket-save-v1.1';   // v1.1: new (big) island, so v1 saves are not resumed
+const SAVE_KEY = 'tabe-pocket-save-v1.2';   // v1.2: nests, packs and pocket food change the world shape, so v1.1 saves are not resumed
 const params = new URLSearchParams(location.search);
+const REVEAL = params.get('reveal') === '1';   // designer view: no fog, every bird drawn (?reveal=1); the sim is unchanged
 void FEATURES;
 
 let w: World;
@@ -30,10 +33,15 @@ function boot(): void {
   else newWorld(Number(s || 1));
   const d = Number(params.get('day') || 0); const hh = Number(params.get('hour') || 0);
   if (d || hh) { const target = (d ? (d - 1) : 0) * CFG.DAY_TICKS + ((hh || CFG.START_HOUR) - CFG.START_HOUR) * (CFG.DAY_TICKS / 24); while (w.tick < target) step(w); }
+  const tk = Number(params.get('tick') || 0); while (w.tick < tk) step(w);   // land on an exact moment (screenshots, bug reports)
   if (params.get('speed')) speed = Number(params.get('speed'));
   if (params.get('pick') === 'fight') { const p = w.scouts.find((x) => x.combat) || w.scouts.find((x) => x.threat); if (p) { selected = p.id; cam.x = p.x; cam.y = p.y; } }
   else if (params.get('pick')) { const p = w.scouts.find((x) => x.name === params.get('pick')); if (p) { selected = p.id; cam.x = p.x; cam.y = p.y; } }
   else if (d || hh) { cam.x = w.camp.sited ? w.camp.x : cam.x; cam.y = w.camp.sited ? w.camp.y : cam.y; }
+  const look = params.get('look');   // camera on the Roukha: ?look=nest (a nest calling a hunt, else the first), ?look=pack (a hunting pack)
+  if (look === 'nest') { const n = w.nests.find((x) => x.muster) || w.nests[0]; if (n) { cam.x = n.x; cam.y = n.y; follow = false; } }
+  if (look === 'fight') { const a = w.scouts.filter((x) => x.combat && x.status === 'ok'); const b = w.birds.filter((x) => x.state === 'charge'); const all = [...a, ...b]; if (all.length) { cam.x = all.reduce((t, e) => t + e.x, 0) / all.length; cam.y = all.reduce((t, e) => t + e.y, 0) / all.length; follow = false; } }
+  if (look === 'pack') { const p = w.packs.find((x) => x.kind === 'hunt' && x.state !== 'gone' && x.members.length); if (p) { cam.x = p.x; cam.y = p.y; follow = false; } }
   if (params.get('panel') === '0') { camOn = selected; selected = -1; }   // keep the camera on him, without the card
   if (params.get('zoom')) cam.z = Number(params.get('zoom'));
   const ins = params.get('inset');   // preview a phone's safe-area insets on a desktop: ?inset=left,top,right,bottom (px)
@@ -78,6 +86,7 @@ function terrainChunk(cx: number, cy: number): HTMLCanvasElement {
 }
 /** Fog for one chunk, with a 1-tile border from the neighbours so smoothed edges match across chunk seams. */
 function fogChunk(cx: number, cy: number, refresh: boolean): HTMLCanvasElement | null | 'clear' {
+  if (REVEAL) return 'clear';
   const n = w.map.n, nc = Math.ceil(n / CH), key = cy * nc + cx; let e = fogChunks.get(key);
   if (e && !refresh) return e.count === CH * CH ? 'clear' : e.cv;
   let cnt = 0; const sn = w.map.seen;
@@ -237,7 +246,7 @@ function draw(fogRefresh: boolean): void {
   const M = CFG.TILE_M, n = w.map.n, nc = Math.ceil(n / CH), CM = CH * M;
   const [x0, y0] = toWorld(0, 0), [x1, y1] = toWorld(innerWidth, innerHeight);
   const vis = (x: number, y: number, r = 4): boolean => x > x0 - r && x < x1 + r && y > y0 - r && y < y1 + r;
-  const seen = (x: number, y: number): boolean => !!w.map.seen[Math.floor(y / M) * n + Math.floor(x / M)];
+  const seen = (x: number, y: number): boolean => REVEAL || !!w.map.seen[Math.floor(y / M) * n + Math.floor(x / M)];
   // visible chunk range
   const cx0 = Math.max(0, Math.floor(x0 / CM)), cx1 = Math.min(nc - 1, Math.floor(x1 / CM)), cy0 = Math.max(0, Math.floor(y0 / CM)), cy1 = Math.min(nc - 1, Math.floor(y1 / CM));
   ctx.imageSmoothingEnabled = false;
@@ -248,7 +257,7 @@ function draw(fogRefresh: boolean): void {
   if (w.camp.sited) {
     const c = w.camp;
     ctx.strokeStyle = 'rgba(255,240,200,.25)'; ctx.lineWidth = 0.3; ctx.setLineDash([1, 1]); circle(c.x, c.y, 14, false);
-    if (cam.z > 1.2) { ctx.strokeStyle = 'rgba(255,240,200,.12)'; ctx.setLineDash([2, 3]); circle(c.x, c.y, CFG.FAR_M, false); }   // the camp perimeter: beyond it, men go in teams
+    if (cam.z > 1.2) { ctx.strokeStyle = 'rgba(255,240,200,.12)'; ctx.setLineDash([2, 3]); circle(c.x, c.y, SPECIES.scout.home.safeR, false); }   // the camp perimeter: beyond it, men go in teams
     ctx.setLineDash([]);
     for (const k in c.builds) { const b = c.builds[k]; if (!b.built && b.progress <= 0) continue; ctx.globalAlpha = b.built ? 1 : 0.4; ctx.fillStyle = BCOL[k] || '#a08060'; ctx.fillRect(b.x - 1.6, b.y - 1.2, 3.2, 2.4); ctx.globalAlpha = 1; if (cam.z > 5) label(BLAB[k] || k, b.x, b.y + 2.4, '#ddd', 2.2); }
     if (c.builds.palisade && c.builds.palisade.built) { ctx.strokeStyle = '#6b4a2a'; ctx.lineWidth = 0.8; circle(c.x, c.y, 16, false); }
@@ -265,6 +274,13 @@ function draw(fogRefresh: boolean): void {
     for (const i of e.bushes) { const b = w.bushes[i]; if (!vis(b.x, b.y) || !seen(b.x, b.y)) continue; ctx.fillStyle = '#4f7f3a'; circle(b.x, b.y, 0.8); if (b.berries >= 1) { ctx.fillStyle = '#c03a4a'; circle(b.x + 0.3, b.y - 0.2, 0.22); circle(b.x - 0.3, b.y + 0.1, 0.22); } }
   }
   for (const r of w.rookeries) if (seen(r.x, r.y)) { ctx.strokeStyle = 'rgba(200,60,40,.6)'; ctx.lineWidth = 0.4; circle(r.x, r.y, CFG.ROOKERY_GUARD_M, false); ctx.fillStyle = '#7a5a3a'; circle(r.x, r.y, 2.5); if (r.eggs) { ctx.fillStyle = '#f2ead0'; for (let i = 0; i < Math.min(r.eggs, 6); i++) circle(r.x - 1.2 + (i % 3) * 1.2, r.y - 0.5 + Math.floor(i / 3), 0.35); } }
+  // Roukha nests (v1.2): twig ring + eggs; dashed ring = the birds' home range (where they feel safe)
+  for (const n of w.nests) {
+    if (!seen(n.x, n.y) || !vis(n.x, n.y)) continue;
+    ctx.strokeStyle = 'rgba(200,90,50,.35)'; ctx.lineWidth = 0.3; ctx.setLineDash([1.5, 1.5]); circle(n.x, n.y, SPECIES.roukha.home.safeR, false); ctx.setLineDash([]);
+    ctx.fillStyle = '#6b5236'; circle(n.x, n.y, 3.2); ctx.fillStyle = '#8a6c48'; circle(n.x, n.y, 2.2); ctx.fillStyle = '#5a4430'; circle(n.x, n.y, 1.3);
+    ctx.fillStyle = '#efe6cc'; circle(n.x - 0.5, n.y - 0.2, 0.45); circle(n.x + 0.45, n.y + 0.3, 0.45); circle(n.x + 0.1, n.y - 0.6, 0.4);
+  }
   for (const c of w.carcasses) { if (!vis(c.x, c.y) || !seen(c.x, c.y)) continue; ctx.fillStyle = c.kind === 'deer' ? '#7a5a3a' : '#5a2a2a'; ellipse(c.x, c.y, c.age === 'B' ? 1.5 : 1.1, c.age === 'B' ? 0.8 : 0.6, 0.4); }
   for (const g of w.signs) { if (!vis(g.x, g.y) || cam.z < 4 || !seen(g.x, g.y)) continue; ctx.fillStyle = g.kind === 'blood' ? '#a01818' : 'rgba(60,40,30,.7)'; circle(g.x, g.y, 0.18); }
   // animals: only what some scout can actually see (the same test the shooting uses, so nothing is shot unseen)
@@ -272,7 +288,7 @@ function draw(fogRefresh: boolean): void {
   const fireLitNow = w.camp.sited && w.camp.fire.built && w.camp.fire.fuel > 0;
   for (const b of w.birds) {
     if (b.state === 'dead' || !vis(b.x, b.y)) continue;
-    const near = w.scouts.some((s) => s.status !== 'dead' && canSee(w, s, b.x, b.y)) || (fireLitNow && seen(b.x, b.y) && Math.hypot(b.x - w.camp.fire.x, b.y - w.camp.fire.y) < CFG.FIRE_LIGHT_M);
+    const near = REVEAL || w.scouts.some((s) => s.status !== 'dead' && canSee(w, s, b.x, b.y)) || (fireLitNow && seen(b.x, b.y) && Math.hypot(b.x - w.camp.fire.x, b.y - w.camp.fire.y) < CFG.FIRE_LIGHT_M);
     if (!near) continue;
     const [bx, by] = P(b);
     const sz = b.age === 'B' ? 1.6 : b.age === 'A' ? 1.25 : 0.9; const a = angleOf(b);
@@ -281,6 +297,18 @@ function draw(fogRefresh: boolean): void {
     ctx.fillStyle = '#e8c040'; ctx.beginPath(); ctx.moveTo(sz * 0.8, -sz * 0.25); ctx.lineTo(sz * 1.8, 0); ctx.lineTo(sz * 0.8, sz * 0.25); ctx.fill();
     ctx.restore();
     if (b.bleeding) { ctx.fillStyle = '#d01010'; circle(bx, by + sz, 0.2); }
+    if (b.job === 'muster') { ctx.strokeStyle = 'rgba(255,210,110,.8)'; ctx.lineWidth = 0.2; circle(bx, by, sz + 0.6, false); }
+    if (b.state === 'flee') { ctx.strokeStyle = 'rgba(255,120,120,.8)'; ctx.lineWidth = 0.2; circle(bx, by, sz + 0.6, false); }
+  }
+  // firing sequence: aim line (brightens as the aim settles), muzzle flash on the shot
+  for (const s of w.scouts) {
+    if (s.status !== 'ok' || !s.combat) continue;
+    const [sx, sy] = P(s);
+    if (s.firePhase === 'aim' && s.aimTarget >= 0) {
+      const b = w.birds.find((x) => x.id === s.aimTarget && x.state !== 'dead');
+      if (b) { const [bx, by] = P(b); const k = Math.min(1, s.aimT / Math.max(1, s.aimNeed)); ctx.strokeStyle = `rgba(255,${Math.round(240 - 140 * k)},${Math.round(120 - 80 * k)},${0.25 + 0.6 * k})`; ctx.lineWidth = 0.12 + 0.18 * k; ctx.setLineDash([0.8, 0.6]); ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(bx, by); ctx.stroke(); ctx.setLineDash([]); }
+    }
+    if (w.tick - s.flashT < 3) { const a = angleOf(s); const mx = sx + Math.cos(a) * 2.9, my = sy + Math.sin(a) * 2.9; ctx.fillStyle = 'rgba(255,230,120,.95)'; circle(mx, my, 0.9); ctx.fillStyle = 'rgba(255,255,230,1)'; circle(mx, my, 0.45); }
   }
   // bullets
   ctx.strokeStyle = '#ffe680'; ctx.lineWidth = 0.25; for (const b of w.bullets) { const [bx, by] = P(b); ctx.beginPath(); ctx.moveTo(bx - b.dx * 2.5, by - b.dy * 2.5); ctx.lineTo(bx, by); ctx.stroke(); }
@@ -337,6 +365,22 @@ function draw(fogRefresh: boolean): void {
   if (cam.z >= 2.2 && !mapView) {
     const L = (t: string, x: number, y: number, col: string, px: number): void => { if (t) placeLabel(t, x, y, col, px); };
     const order = [...w.scouts].sort((p, q) => (q.id === selected ? 1 : 0) - (p.id === selected ? 1 : 0) || (q.act && q.act.team ? 1 : 0) - (p.act && p.act.team ? 1 : 0) || p.id - q.id);
+    // nests and packs (v1.2): what the birds are up to, where a scout could see it
+    for (const n of w.nests) {
+      if (!seen(n.x, n.y)) continue;
+      const [px, py] = [n.x, n.y]; const sx = (px - cam.x) * cam.z + midX(), sy = (py - cam.y) * cam.z + midY();
+      if (sx < -80 || sx > innerWidth + 80 || sy < -40 || sy > innerHeight + 40) continue;
+      const m = n.muster; const watched = REVEAL || w.birds.some((b) => b.nest === n.id && b.state !== 'dead' && w.scouts.some((o) => o.status !== 'dead' && canSee(w, o, b.x, b.y)));
+      L(`${n.name} nest` + (m && watched ? ` · mustering ${1 + m.crew.length}/${m.need}` : ''), sx, sy + 3.5 * cam.z + 10, m && watched ? '#ffd27a' : '#e0b090', 11);
+    }
+    for (const p of w.packs) {
+      if (p.kind !== 'hunt' || p.state === 'gone') continue;
+      const ms = w.birds.filter((b) => b.pack === p.id && b.state !== 'dead');
+      if (!REVEAL && !ms.some((b) => w.scouts.some((o) => o.status !== 'dead' && canSee(w, o, b.x, b.y)))) continue;
+      const sx = (p.x - cam.x) * cam.z + midX(), sy = (p.y - cam.y) * cam.z + midY();
+      const txt = p.state === 'retreat' ? `retreating (${ms.length}) · fear ${Math.round(packFear(w, p))}` : p.state === 'return' ? `pack heading home (${ms.length})` : p.state === 'charge' ? `charging! (${ms.length})` : p.state === 'stalk' ? `pack stalking (${ms.length})` : `hunting pack (${ms.length})`;
+      L(txt, sx, sy - 3 * cam.z - 8, p.state === 'retreat' || p.state === 'return' ? '#9fe0a0' : '#ff8a70', 11);
+    }
     for (const s of order) {
       if (s.status === 'dead' && s.shipped) continue;
       const [px, py] = P(s); const sx = (px - cam.x) * cam.z + midX(), sy = (py - cam.y) * cam.z + midY();
@@ -365,8 +409,11 @@ function drawMan(s: Scout, x: number, y: number): void {
   if (s.sleeping) { ctx.fillStyle = '#6a5a3a'; ctx.beginPath(); ctx.ellipse(-0.3, 0, 1.3, 0.7, 0, 0, Math.PI * 2); ctx.fill(); }
   // rifle: forward when fighting, slung across the back otherwise
   ctx.strokeStyle = '#2a1f14'; ctx.lineWidth = 0.22; ctx.beginPath();
-  if (s.combat) { ctx.moveTo(0.1, 0.45); ctx.lineTo(1.9, 0.3); } else { ctx.moveTo(-0.7, -0.6); ctx.lineTo(-0.2, 0.75); }
+  const up = s.combat && (s.firePhase === 'aim' || s.firePhase === 'bolt');   // rifle presented: shouldered and pointed
+  if (up) { ctx.moveTo(0.0, 0.25); ctx.lineTo(2.1, 0.05); } else if (s.combat) { ctx.moveTo(0.1, 0.45); ctx.lineTo(1.6, 0.6); } else { ctx.moveTo(-0.7, -0.6); ctx.lineTo(-0.2, 0.75); }
   ctx.stroke();
+  // crouched: a knee/boot block behind him so the stance reads at a glance
+  if (s.posture === 'crouch' && s.status === 'ok' && !s.sleeping) { ctx.fillStyle = '#3a2c1c'; ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 0.1; ctx.beginPath(); ctx.ellipse(-1.0, 0.35, 0.62, 0.45, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ctx.beginPath(); ctx.ellipse(-0.85, -0.45, 0.4, 0.3, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
   // shoulders
   ctx.fillStyle = s.status === 'downed' ? '#b04040' : sq.color; ctx.beginPath(); ctx.ellipse(0, 0, 0.55, 0.9, 0, 0, Math.PI * 2); ctx.fill();
   ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.lineWidth = 0.12; ctx.stroke();
@@ -375,12 +422,23 @@ function drawMan(s: Scout, x: number, y: number): void {
   if (sq.hat === 'brim') { ctx.beginPath(); ctx.arc(0.05, 0, 0.62, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#7a6040'; ctx.beginPath(); ctx.arc(0.05, 0, 0.34, 0, Math.PI * 2); ctx.fill(); }
   else { ctx.fillStyle = '#d8d0b0'; ctx.beginPath(); ctx.ellipse(0.1, 0, 0.6, 0.45, 0, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#b0a888'; ctx.fillRect(0.05, -0.08, 0.5, 0.16); }
   ctx.restore();
+  if (s.status === 'ok' && s.combat) {
+    if (s.firePhase === 'aim') { const k = Math.min(1, s.aimT / Math.max(1, s.aimNeed)); ctx.strokeStyle = 'rgba(255,220,120,.9)'; ctx.lineWidth = 0.25; ctx.beginPath(); ctx.arc(x, y, 2.3, -Math.PI / 2, -Math.PI / 2 + k * Math.PI * 2); ctx.stroke(); }
+    else if (s.firePhase === 'bolt' || s.reload > 0) { const k = s.reload > 0 ? 1 : s.fireT / Math.max(1, CFG.BOLT_TICKS); ctx.strokeStyle = s.reload > 0 ? 'rgba(255,140,90,.9)' : 'rgba(170,210,255,.9)'; ctx.lineWidth = 0.25; ctx.beginPath(); ctx.arc(x, y, 2.3, -Math.PI / 2, -Math.PI / 2 + (1 - k) * Math.PI * 2 + 0.3); ctx.stroke(); label('⟲', x + 2.4, y - 2.0, s.reload > 0 ? '#ffb080' : '#bfe0ff', 1.6); }
+  }
 }
 const SHORT: Record<string, string> = { eat: 'eating', drink: 'drinking', sleep: 'asleep', watch: 'on watch', chop: 'firewood', fell: 'timber', forage: 'foraging', cook: 'cooking', fuel: 'fire', build: 'building', fetchWater: 'water run', hunt: 'hunting', rhunt: 'tracking', loot: 'loot', process: 'butchering', unpack: 'unpacking', unload: 'hauling', load: 'loading', meetBoat: 'trading', rescue: 'rescue!', treat: 'patching up', buddy: 'with team', assist: 'helping', home: 'heading back', idle: 'resting', explore: 'scouting', warm: 'warming up', scrape: 'hides' };
 function shortLabel(s: Scout): { text: string; col: string } {
   if (s.status === 'dead') return { text: 'dead', col: '#bbb' };
   if (s.status === 'downed') return { text: 'DOWN', col: '#ff6a6a' };
-  if (s.combat) return { text: 'fighting!', col: '#ffb040' };
+  if (s.combat) {
+    if (s.act && s.act.label === 'Fighting hand to hand') return { text: 'hand to hand!', col: '#ff8060' };
+    if (s.reload > 0) return { text: 'reloading', col: '#ffb080' };
+    if (s.firePhase === 'bolt') return { text: 'working the bolt', col: '#bfe0ff' };
+    if (s.firePhase === 'aim') return { text: 'aiming', col: '#ffd27a' };
+    if (s.firePhase === 'present') return { text: 'raising rifle', col: '#ffd27a' };
+    return { text: s.posture === 'crouch' ? 'crouched' : 'fighting!', col: '#ffb040' };
+  }
   if (s.status === 'recovering') return { text: 'recovering', col: '#ffb0b0' };
   const k = s.act ? s.act.kind : 'idle';
   if (k === 'loot') return { text: s.carcassMode === 'drag' ? 'hauling the bird' : 'taking the bird', col: '#e8eef4' };
@@ -431,6 +489,7 @@ function hud(): void {
   const icon = isDark(h) ? '🌙' : WEATHER_ICON[w.weather] || '';
   $('clock').textContent = `Day ${dayOf(w.tick)} ${clockStr(w.tick)} ${icon}`;
   $('money').textContent = `💰 ${Math.round(w.ledger.credits + w.ledger.cash)}`;
+  $('foodpts').textContent = `🍖 ${Math.round(foodPoints(w))}`;
 }
 /** The expanded HUD: everything the compact chip leaves out. */
 function hudHtml(): string {
@@ -444,7 +503,7 @@ function hudHtml(): string {
   <div>👥 ${alive}/${w.scouts.length} men · Boss ${commander(w)?.name || '—'}</div>
   <div>💰 ${Math.round(w.ledger.credits)} cr account · ${Math.round(w.ledger.cash)} cash</div>
   <div>⛵ boat ${boat}</div>
-  <div>🍖 food ${foodDays.toFixed(1)} days · 💧 water ${Math.floor(stock(w, 'water'))} · 🪵 wood ${Math.floor(stock(w, 'wood'))}</div>
+  <div>🍖 food ${Math.round(foodPoints(w))} pts (${foodDays.toFixed(1)} days; a meal = 100) · 💧 water ${Math.floor(stock(w, 'water'))} · 🪵 wood ${Math.floor(stock(w, 'wood'))}</div>
   <div>🔫 ${ammo} rounds</div>
   <div>🧭 teams: ${teamLine}</div>`;
 }
@@ -463,6 +522,7 @@ function showPanel(): void {
     <div class="ph"><b>${s.name}</b> <span class="rank">${CFG.RANKS[s.rank]}${pos ? ' · #' + pos + ' in command' : ''}</span></div>
     <div class="traits">${s.traits.map((t) => `<span class="tag">${TRAIT_FX[t].label}</span>`).join('')}${s.injuries.map((i) => `<span class="tag bad">${CFG.INJURIES[i].label}</span>`).join('')}${s.sick > 0 ? `<span class="tag bad">${CFG.SICKNESS[s.sickKind]?.label || 'Sick'}</span>` : ''}${s.hangover > w.tick ? '<span class="tag bad">Hungover</span>' : ''}</div>
     <div class="row">HP ${Math.round(s.hp)}/${s.maxHp} · ${status} · ammo ${s.mag + s.ammo} · ${s.guns.map((g) => `${g.type} ${Math.round(g.cond)}%`).join(', ') || 'unarmed'} · purse ${Math.round(s.purse)}</div>
+    <div class="row">🎒 pocket food: ${pocketPts(s) > 0 ? `<b>${Math.round(pocketPts(s))} pts</b> (${Object.entries(s.pocket).filter(([, v]) => (v || 0) > 0).map(([k, v]) => `${v} ${k === 'smoked' ? 'jerky' : k}`).join(', ')})` : 'none'}</div>
     <div class="row"><b>Doing:</b> ${s.act ? s.act.label : '—'}</div>
     <div class="row"><b>Thinking:</b> <i>${s.thought || s.why || '—'}</i></div>
     <div class="needs">${needs.map(([k, v]) => `<div><span class="nl">${k === 'rest' ? 'sleep' : k}</span>${bar(v, NEED_COL[k])}<span class="nv">${Math.round(v)}</span></div>`).join('')}</div>

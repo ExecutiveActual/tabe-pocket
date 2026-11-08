@@ -19,6 +19,17 @@ export const ITEM_LABEL: Partial<Record<Item, string>> = {
 };
 // Roukha age classes (CONFIRMED: juvenile, adult, big old bull; bigger birds have better beaks). Numbers PLACEHOLDER.
 export type AgeClass = 'J' | 'A' | 'B';
+/** Food items: points per unit (a full meal = 100 points, the scout's food meter) and whether it spoils (spoil rates in
+ *  CFG.SPOIL_H). Only non-spoiling food goes in a scout's pocket. edible: eaten as is (raw meat/fish must be cooked first,
+ *  their points count for planning). PLACEHOLDER numbers. */
+export const FOOD: Partial<Record<Item, { pts: number; spoils: boolean; edible: boolean; label: string }>> & Record<'meal' | 'smoked' | 'berries' | 'ration' | 'rawMeat' | 'rawFish', { pts: number; spoils: boolean; edible: boolean; label: string }> = {
+  meal:    { pts: 40, spoils: true,  edible: true,  label: 'hot meal (portion)' },
+  smoked:  { pts: 32, spoils: false, edible: true,  label: 'smoked meat / jerky' },
+  ration:  { pts: 35, spoils: false, edible: true,  label: 'tinned ration' },
+  berries: { pts: 9,  spoils: true,  edible: true,  label: 'berries (handful)' },
+  rawMeat: { pts: 36, spoils: true,  edible: false, label: 'raw meat' },
+  rawFish: { pts: 36, spoils: true,  edible: false, label: 'raw fish' },
+};
 export const AGE: Record<AgeClass, { label: string; hp: number; size: number; yieldMul: number; dmgMul: number; beak: Item; carc: Item; chance: number }> = {
   J: { label: 'juvenile', hp: 60, size: 0.8, yieldMul: 0.6, dmgMul: 0.7, beak: 'beakJ', carc: 'carcJ', chance: 0.3 },
   A: { label: 'adult', hp: 100, size: 1.0, yieldMul: 1.0, dmgMul: 1.0, beak: 'beakA', carc: 'carcA', chance: 0.55 },
@@ -133,7 +144,6 @@ export const CFG = {
   // Trails: every tile a scout walks onto gains traffic; past thresholds it walks faster. Decays slowly. PLACEHOLDER.
   TRAIL_MAX: 400, TRAIL_DECAY_H: 0.25,
   TRAIL_LEVELS: [{ at: 40, mul: 1.12 }, { at: 150, mul: 1.25 }],
-  SPAWN_RING_M: 80,            // raid packs and roamers appear this far beyond their minimum distance from camp
   SPAWN_HIDE_M: 120,           // ...and never inside this distance of any scout (>= the best watch sight, so spawns stay unseen)
   FORAGE_MAX_M: 220,           // day-trip radius for foraging and traps
   FISH_SPOT_DENSITY: 0.01, TRAPS_MAX: 4, SET_TRAP_H: 1.0,
@@ -165,17 +175,10 @@ export const CFG = {
   CARRY_CAP: 8,                // weight units a scout can carry
   WEIGHT: { wood: 2, timber: 8, berries: 0.5, rawMeat: 1, rawFish: 1, meal: 1, ration: 0.5, rawHide: 2, hide: 2, water: 1, ammo: 0.05, meds: 0.5, tobacco: 0.2, smoked: 0.6, rum: 0.5, leaf: 0.2, tools: 2, canvas: 3, eggs: 0.3, herbs: 0.2, carcJ: 0, carcA: 0, carcB: 0, beakJ: 0.5, beakA: 0.5, beakB: 0.5, beakCr: 0.5, feathers: 0.5, talons: 0.3 } as Record<Item, number>,
   EXPLORE_PUSH_M: 35,          // PLACEHOLDER explorers walk this far past the edge of the known ground
-  FAR_M: 40,                   // PLACEHOLDER the camp perimeter: work beyond this from camp is done as a team
   // ---- Teams (v1.1): outside work is done in pairs or threes; in-camp work goes faster with helpers ----
   // Men needed for each outside job, counting the man who asks. Looting a bird scales with its age class.
   TEAM_SIZE: { chop: 2, fell: 3, forage: 2, fish: 2, fetchWater: 2, hunt: 2, rhunt: 3, explore: 2, lootJ: 2, lootA: 2, lootB: 3, lootDeer: 2 } as Record<string, number>,  // PLACEHOLDER
   TEAM_URGENCY: { loot: 2.7 } as Record<string, number>,   // PLACEHOLDER request urgency by job (others use their goal priority)
-  TEAM_DROP_MARGIN: 0.3,       // PLACEHOLDER a man drops what he's doing if its value + this <= the request's urgency
-  TEAM_PROMISE_MAX_H: 0.35,    // PLACEHOLDER "gimme a sec": he promises to come if his job is done within this many hours
-  TEAM_LINK_M: 6,              // the team leaves once everyone is within this of the leader
-  TEAM_WAIT_H: 0.8,            // PLACEHOLDER with nobody coming after this long the leader falls back (smaller team, or cancel)
-  TEAM_WAIT_MAX_H: 1.6,        // PLACEHOLDER ...and even with promises outstanding, after this long
-  TEAM_REASK_H: 0.2,           // a man who said no is asked again after this long
   TEAM_SOLO_MAX_M: 80,         // PLACEHOLDER fallback: a low-risk job (wood, water, forage, traps, daytime) may go solo only this close
   TEAM_SOLO_INTEL_M: 120,      // ...and only with no fresh Roukha sign within this of the job
   TEAM_RALLY_MATE_M: 25,       // a leader outside camp re-forms his team on the spot if a mate is this close; else he walks home
@@ -222,7 +225,14 @@ export const CFG = {
   MORALE_NO_DOWNTIME_H: 30,    // 'No downtime' if no leisure for this many hours
   MORALE_NO_DOWNTIME: 6,
   MORALE_RECOVER_FAST: 1.5,    // morale rises a bit faster than it falls once needs are met
-  FOOD_VALUE: { berries: 9, meal: 40, smoked: 32, ration: 35 } as Partial<Record<Item, number>>, // food points per unit eaten
+  // Food is counted in points: the scout's food meter, so a full meal = 100 points. FOOD (top of this file) has each
+  // item's points and whether it spoils. Pocket rations (v1.2): before heading out a scout takes non-spoiling food
+  // from the stores, up to POCKET_PTS, in POCKET_PREF order, and eats it out there instead of walking back.
+  POCKET_PTS: 150,             // PLACEHOLDER food points a scout pockets for a trip (1.5 full meals)
+  POCKET_PREF: ['smoked', 'ration'] as Item[],   // PLACEHOLDER what goes in the pocket, first choice first (non-spoiling only)
+  SUPPER_FIRST: 0.4,           // sleep score cap while hungry with food in camp and not exhausted (eat, then bed)
+  POCKET_RESERVE: 120,         // PLACEHOLDER food points per man always left in the stores (pockets only take the surplus)
+  SNACK_TICKS: 30,             // PLACEHOLDER 3 s standing still to eat from the pocket
   EAT_PREF: ['meal', 'smoked', 'berries', 'ration'] as Item[], // rations are the last resort
   // Spoilage per in-game hour (fraction of stock lost). Smoked meat and rations keep. PLACEHOLDER.
   SPOIL_H: { rawHide: 0.004, rawMeat: 0.02, rawFish: 0.03, meal: 0.015, berries: 0.006 } as Partial<Record<Item, number>>,
@@ -376,12 +386,11 @@ export const CFG = {
   ROUKHA_PARTS: { feathers: 2, hide: 1, talons: 2, rawMeat: 10 } as Partial<Record<Item, number>>, // adult carcass, scaled by age yieldMul; plus its beak
   LICENSE_FEE: 8,              // PLACEHOLDER fee per Roukha killed, paid to the license office at the boat
   // Roukha hunting (CONFIRMED: found by sign and by calls, Tracking helps; wounded birds leave a blood trail)
-  WILD_FLOCKS: 3, WILD_FLOCK_SIZE: [1, 3], // roaming wild Roukha, endless supply (respawn when gone)
   SIGN_EVERY_H: 0.5, SIGN_LIFE_H: 14, SIGN_NOTICE_M: 10,
   CALL_CHANCE_H: 0.5, CALL_HEAR_M: 160, CALL_ERROR_M: 20,
   INTEL_LIFE_H: 4,
   HUNT_MAX_H: 3.5, HUNT_PARTY: 2, HUNT_SHOOT_M: 50, HUNT_MAX_ODDS: 1.2, // won't hunt a group that could charge them
-  VITAL_CHANCE: 0.22, VITAL_MUL: 2.6, HEADSHOT_CHANCE: 0.12, HEADSHOT_CAREFUL: 0.04, // one good shot can drop a bird
+  VITAL_CHANCE: 0.14, VITAL_MUL: 2.6, HEADSHOT_CHANCE: 0.06, HEADSHOT_CAREFUL: 0.03, // PLACEHOLDER (v1.2: lower, fights last several shots) // one good shot can drop a bird
   TRAIL_BLEED_HP_H: 10,        // a badly wounded bird keeps bleeding and may die along its trail
   // Carry mode after a Roukha kill (the hunt leader decides):
   //  DRAG: the carcass is tied to a scout's back. Slow, can't shoot well. Processed at camp into all parts.
@@ -417,22 +426,31 @@ export const CFG = {
   EFFECTIVE_M: 60, MAX_RANGE_M: 85,  // PLACEHOLDER rifle ranges
   // Guns: mixed eras (CONFIRMED); loadout by role. Stats PLACEHOLDER, all invented, no real-world models.
   GUNS: {
-    rifle:   { label: 'Long hunting rifle', mag: 5, reload: 30, eff: 70, max: 95, dmg: [40, 70], cone: 1.0, aim: 1.0 },
-    carbine: { label: 'Lever carbine', mag: 8, reload: 40, eff: 50, max: 75, dmg: [32, 58], cone: 1.25, aim: 0.8 },
-    pistol:  { label: 'Service pistol', mag: 7, reload: 25, eff: 22, max: 35, dmg: [24, 44], cone: 1.6, aim: 0.6 },
-  } as Record<string, { label: string; mag: number; reload: number; eff: number; max: number; dmg: number[]; cone: number; aim: number }>,
+    rifle:   { label: 'Long hunting rifle', mag: 5, reload: 30, eff: 70, max: 95, dmg: [40, 70], cone: 1.0, aim: 1.0, bolt: 1.0 },  // bolt action
+    carbine: { label: 'Lever carbine', mag: 8, reload: 40, eff: 50, max: 75, dmg: [32, 58], cone: 1.25, aim: 0.8, bolt: 0.6 }, // lever: faster than a bolt
+    pistol:  { label: 'Service pistol', mag: 7, reload: 25, eff: 22, max: 35, dmg: [24, 44], cone: 1.6, aim: 0.6, bolt: 0.4 },  // self-loading
+  } as Record<string, { label: string; mag: number; reload: number; eff: number; max: number; dmg: number[]; cone: number; aim: number; bolt: number }>,
   LOADOUT_BY_RANK: [['carbine'], ['rifle'], ['carbine', 'pistol'], ['rifle', 'pistol']] as string[][], // Hand, Hunter, Foreman, Boss
   GUN_WEAR_PER_SHOT: 0.6, JAM_BELOW: 55, JAM_CLEAR_TICKS: 25, MAINT_H: 0.5, MAINT_BELOW: 60,
   MELEE_M: 1.8, MELEE_DMG: [12, 22], MELEE_EVERY: 9,  // rifle butt and bayonet
   BIRD_ATTACKS: ['beak stab', 'talon kick'],
   // Downed: survives until helped, but wounds worsen; Medicine stabilizes. PLACEHOLDER.
+  DOWN_WOUND: [10, 45],        // PLACEHOLDER v1.2: how bad it is when a scout goes down (wound severity range, 100 = dead)...
+  OVERKILL_WOUND: 1.5,         // PLACEHOLDER ...plus this per hp the blow went past zero
+  MORTAL_WOUND: 65,            // PLACEHOLDER above this severity treatment can fail (chance grows to 100%; medicine skill and meds help)
   WOUND_WORSEN_H: 12,          // severity points per hour while downed and untreated (100 = dead)
   WOUND_MAXHP_LOSS: 0.2,       // fraction of severity that becomes permanent max-HP loss
   OTHER_THREATS: [] as string[], // stub: rival companies, bandits (Tabe has no natives) and other wildlife come later
   MAG: 5, RELOAD_TICKS: 30, CARRY_AMMO: 30,
-  AIM_TICKS: 10,               // 1.0 s nominal aim (decided 30 Oct)
-  CONE_SETTLE_TICKS: 13,       // cone settles over ~1.25 s
-  CONE_START: 0.09, CONE_MIN: 0.025,  // PLACEHOLDER half-width of the aim cone as a fraction of distance
+  // Firing sequence (v1.2): crouch (CROUCH_TICKS) -> present (PRESENT_TICKS) -> aim -> shot -> bolt (BOLT_TICKS x gun.bolt) -> aim again
+  PRESENT_TICKS: 5,            // PLACEHOLDER 0.5 s to bring the rifle up
+  AIM_MAX_TICKS: 20, AIM_MIN_TICKS: 10,  // PLACEHOLDER aim time: 2 s at shooting skill 0, 1 s at skill 100 (then traits, gun.aim, wounds)
+  SNAP_M: 15, SNAP_MUL: 0.6,   // PLACEHOLDER a bird inside this range gets a snap shot (less aim)
+  MOVING_CONE: 1.5,            // PLACEHOLDER cone multiplier on a charging or fleeing bird
+  SWITCH_KEEP: 0.3,            // share of aim kept when swinging onto a different bird
+  BOLT_TICKS: 10,              // PLACEHOLDER ~1 s to work the bolt between shots
+  CONE_SETTLE_TICKS: 20,       // PLACEHOLDER cone keeps tightening for 2 s of aim: aiming longer is more accurate
+  CONE_START: 0.16, CONE_MIN: 0.05,  // PLACEHOLDER half-width of the aim cone as a fraction of distance (misses happen)
   CROUCH_TICKS: 4, CROUCH_CONE: 0.75,
   BULLET_MS: 260, BULLET_DMG: [34, 56],
   DANGER_M: 70,                // known bird closer than this puts scouts on alert
@@ -444,27 +462,91 @@ export const CFG = {
   HUNT_SHOT_M: 40,
 
   // ---- Roukha ----
-  BIRD_HP: 100, BIRD_WALK_MS: 1.6, BIRD_RUN_MS: 4.2, BIRD_SIGHT_M: 100,
-  PECK_DMG: 14, PECK_EVERY: 8, PECK_M: 1.4,
+  BIRD_HP: 100, BIRD_WALK_MS: 1.6, BIRD_RUN_MS: 6.0,  /* PLACEHOLDER v1.2: was 4.2, charges reach the line now */ BIRD_SIGHT_M: 100,
+  PECK_DMG: 14, PECK_EVERY: 10, PECK_M: 1.4,  // PLACEHOLDER v1.2: every 1.0 s (was 0.8)
+  PACK_SATED_DOWNS: 2,         // PLACEHOLDER a hunting pack that has put this many scouts down breaks off and goes home (no wipe-outs in one fight)
+  MAX_ON_ONE: 2,               // PLACEHOLDER most birds that can be on one scout at once
   ODDS_RADIUS_M: 40,           // scouts this close to the prey count against the pack
   ODDS_W: { ready: 1, busy: 0.4, downed: 0.1 },  // decided weights (old slice)
   CHARGE_ODDS: 2.0, CHARGE_ODDS_NIGHT: 1.6,       // bolder at night (PLACEHOLDER)
-  STALK_M_DAY: 88, STALK_M_NIGHT: 34, STALK_H: 0.8, WITHDRAW_M: 85, BIRD_SIGHT_NIGHT_M: 60, BIRD_WARY_M: 32,
-  BIRD_FLEE_HP: 35,
-  PACK_BREAK_FRAC: 0.5,        // rout check: a pack breaks when it's losing: half its birds down/fled...
-  ROUT_ODDS: 1.0,              // ...or its odds fall below this after taking losses. They are not cowards otherwise.
-  BULL_LOSS_RESOLVE: 0.25,     // packs are led by a bull; if he dies the pack routs at this much smaller loss
+  STALK_M_DAY: 60, STALK_M_NIGHT: 34, STALK_H: 0.8, BIRD_SIGHT_NIGHT_M: 60,
+  BIRD_TOUGH: 1.4,             // PLACEHOLDER v1.2: damage to birds is divided by this (headshots excepted): fights take more shots
+  BIRD_FLEE_HP: 35,            // a wounded bird below this runs for its nest alone, bleeding...
+  BIRD_PRESS_ON: 0.4,          // PLACEHOLDER ...but in a charge with 2+ packmates still charging it only breaks below BIRD_FLEE_HP x this
+  ROUT_ODDS: 1.0,              // after losses, odds below this keep shaking a charging pack (FEAR.badOdds every half second)
   FLINCH_TICKS: 4, FLINCH_M: 3, // gunfire: a bullet passing within FLINCH_M makes a bird hesitate briefly (small suppression)
-  ROOKERY_PACKS: 2, ROAMER_DESPAWN_M: 350,
-  ROOKERIES: 1, ROOKERY_GUARD_M: 45, ROOKERY_ODDS_MOD: -0.8, // rookeries are territorial: they charge at worse odds near the nest
+  ROOKERY_GUARD_M: 45,         // the old far rookeries (map data) are kept as scenery and explorers still give them a wide berth
   EGGS_PER_ROOKERY: 6,         // in spring. Collecting eggs needs a player order (not in the zero-input sim)
   PACK_GRACE_H: 36,            // PLACEHOLDER no raids in the first 36 hours
-  PACK_SPAWN_H: { day: 0.006, night: 0.04 }, // chance per in-game hour per day survived (scaled)
-  PACK_BASE: 2, PACK_GROW_PER_DAY: 0.25, PACK_MAX: 5, PACK_PRESSURE_DAYS: 10, // v1: gentler ramp (no replacements in v1)
-  SCENT: { fire: 1, latrine: 1, food: 0.02, wounded: 2 },
+  SCENT: { fire: 1, latrine: 1, food: 0.02, wounded: 2 },   // camp scent makes a hunt call more urgent
+  // ---- Roukha v1.2: nests, hunting packs, fear. Species rules (home range, needs, mustering) are in SPECIES.roukha. ----
+  NEST_BIRDS: [7, 9],          // PLACEHOLDER birds at each nest at the start (nest sites: data/maps/tabe_big.meta.json "nests")
+  NEST_MAX: 10,                // PLACEHOLDER a nest refills (hatchlings, newcomers) up to this...
+  NEST_REGROW_H: 14,           // PLACEHOLDER ...one bird per this many hours, never while a scout is watching
+  HUNT_PACK: [4, 7],           // PLACEHOLDER size of a hunting pack the caller asks for (capped by birds at home; minimum SPECIES.roukha.team.minTeam)
+  HUNT_HOURS: [15, 2],         // PLACEHOLDER birds set out to hunt between these hours (any time when starving)
+  HUNT_NIGHT_URG: 0.6,         // PLACEHOLDER a hunt call is more urgent after dark (more birds drop what they're doing)
+  HUNT_SCENT_URG: 0.4,         // PLACEHOLDER ...and when the camp smells of smoke, latrine and meat (cap)
+  HUNT_COOL_H: 16,             // PLACEHOLDER a nest that sent out a pack calls no new hunt for this long
+  HUNT_TRIP_H: 9,              // PLACEHOLDER a hunting pack that finds no opening heads home after this long
+  HUNT_FED: 45,                // PLACEHOLDER hunger points a pack gets back from a hunt trip (they catch something on the way)
+  HUNT_SHARE: 0.5,             // PLACEHOLDER ...and the birds that stayed home get this share of it (scraps brought back); half again after a retreat
+  FEED_GAIN_H: 2.0,            // PLACEHOLDER hunger points per hour while feeding at home: picking around the nest keeps them going, but hungry birds go hunting
+  MAX_HUNTS_OUT: 1,            // PLACEHOLDER hunting packs out at once, island-wide
+  BIRD_TROT_MS: 2.8,           // a hunting pack's travelling pace
+  NEST_GUARD_M: 45,            // scouts this close to a nest are charged at worse odds (NEST_ODDS_MOD)...
+  NEST_ODDS_MOD: -0.6,         // PLACEHOLDER
+  NEST_AVOID_PAD_M: 30,        // PLACEHOLDER explorers keep this far beyond a known nest's home range (SPECIES.roukha.home.safeR)
+  // Fear (pack morale, 0-100ish). Shock from losses and wounds fades over time; gunfire adds a little (capped);
+  // being far from the nest adds up to 'far'. A pack with shock > 0 and fear >= breakAt retreats to its nest.
+  // Not cowards: gunCap + far stays below breakAt, so gunfire alone never breaks them. A loss counts less in a pack bigger
+  // than lossRef; a bite that lands takes 'bite' off, putting a scout down takes 'downed' off (winning steadies them).
+  FEAR: { loss: 18, lossRef: 5, bite: 3, downed: 20, bull: 30, wound: 5, gunfire: 1.2, gunCap: 22, far: 15, decayH: 25, gunDecayH: 40, badOdds: 1, breakAt: 75 },  // PLACEHOLDER
   CHARGE_MAX_S: 40,
+  CHARGE_REACH_M: 120,         // a charging pack gives up when no standing scout is within this of it
 };
 export type Config = typeof CFG;
+
+// ---------- Species data for the shared AI modules (src/sim/agent) ----------
+// Every creature runs the same needs/utility, home-comfort and help-request modules; this table is what makes a
+// scout a scout and a Roukha a Roukha. Add a species by adding an entry (and an adapter where it acts).
+const needRules = (ids: NeedId[]): Record<string, { decayH: number; seek: number; urgent: number }> => {
+  const o: Record<string, { decayH: number; seek: number; urgent: number }> = {};
+  for (const k of ids) o[k] = { decayH: CFG.NEED_DECAY_H[k], seek: CFG.NEED_SEEK[k], urgent: CFG.NEED_URGENT };
+  return o;
+};
+export const SPECIES = {
+  scout: {
+    // home = the camp. Beyond safeR (the camp perimeter) work is done as a team (TEAM_SIZE says how many).
+    home: { safeR: 40, edgeR: 400, awayGroup: 2 },   // PLACEHOLDER safeR is the old FAR_M
+    team: {
+      dropMargin: 0.3,    // PLACEHOLDER a man drops what he's doing if its value + this <= the request's urgency
+      promiseMaxH: 0.35,  // PLACEHOLDER "gimme a sec": he promises to come if his job is done within this many hours
+      waitH: 0.8,         // PLACEHOLDER with nobody coming after this long the leader falls back (smaller team, or cancel)
+      waitMaxH: 1.6,      // PLACEHOLDER ...and even with promises outstanding, after this long
+      reaskH: 0.2,        // a man who said no is asked again after this long
+      linkM: 6,           // the team leaves once everyone is within this of the leader
+      minTeam: 2,         // a smaller team may go if it is at least a pair (solo only on low-risk jobs, see team.ts)
+    },
+    needs: needRules(['food', 'water', 'rest', 'warmth', 'social', 'fitness']),
+  },
+  roukha: {
+    // home = the nest. Inside safeR birds loaf and feed in ones, twos and threes; nobody goes beyond it in a
+    // group smaller than awayGroup. Comfort falls to 0 at edgeR, and fear builds faster the farther from home.
+    home: { safeR: 70, edgeR: 300, awayGroup: 4 },   // PLACEHOLDER
+    team: {
+      dropMargin: 0.3,    // PLACEHOLDER
+      promiseMaxH: 0.5,   // PLACEHOLDER "gimme a sec" (finishing a feed)
+      waitH: 1.0,         // PLACEHOLDER mustering gives up after this long with no promises...
+      waitMaxH: 2.0,      // PLACEHOLDER ...or this long at most
+      reaskH: 0.3,
+      linkM: 12,          // the pack leaves once all are within this of the leader
+      minTeam: 4,         // PLACEHOLDER a hunting pack is 4 at the very least: fewer and they stay home
+    },
+    needs: { hunger: { decayH: 1.2, seek: 60, urgent: 25 } } as Record<string, { decayH: number; seek: number; urgent: number }>,  // PLACEHOLDER
+  },
+};
+export type SpeciesId = keyof typeof SPECIES;
 
 // All scouts are men from mixed backgrounds (CONFIRMED). Original invented names.
 export const NAMES = ['Jonas', 'Pell', 'Rook', 'Abel', 'Corin', 'Kofi', 'Mateo', 'Ilya', 'Ravi', 'Tomas', 'Hale', 'Tobin', 'Marek', 'Ivo', 'Wendel', 'Silas', 'Brann', 'Odo', 'Fenn', 'Lucan', 'Garrit', 'Emil', 'Tamsin', 'Ansel', 'Dorn'];

@@ -1,4 +1,5 @@
-// Soak: many seeds, many days, zero input. Fails on exceptions, NaNs, wipes, stuck/idle scouts or a frozen scout.
+// Soak: many seeds, many days, zero input. Fails on exceptions, NaNs, too many wipes, stuck/idle scouts or a frozen scout,
+// and checks the v1.2 Roukha rules hold over the long run (packs of 4+, retreats happen, pocket food gets eaten).
 import { describe, it, expect } from 'vitest';
 import { createWorld, step } from '../src/sim/world';
 import { CFG } from '../src/sim/config';
@@ -15,7 +16,8 @@ function check(w: World, seed: number): void {
   expect(bad.slice(0, 5), `seed ${seed} non-finite numbers`).toEqual([]);
 }
 describe('soak', () => {
-  it('12 seeds x 20 days: no exceptions, NaNs, wipes, stuck or frozen scouts', () => {
+  it('12 seeds x 20 days: no exceptions, NaNs, stuck or frozen scouts; most camps survive; packs of 4+', () => {
+    let wipes = 0, deaths = 0, retreats = 0, hunts = 0, pocket = 0, fights = 0;
     for (let seed = 200; seed < 212; seed++) {
       const w = createWorld(seed);
       for (let d = 0; d < 20; d++) {
@@ -29,19 +31,27 @@ describe('soak', () => {
         // every man who was fit all day must have walked somewhere (no deadlock)
         for (const s of w.scouts) if (s.status === 'ok') expect(walked[s.id] || 0, `seed ${seed} day ${d + 1} ${s.name} frozen`).toBeGreaterThan(10);
       }
-      const alive = w.scouts.filter((s) => s.status !== 'dead').length;
-      expect(alive, `seed ${seed} alive`).toBeGreaterThanOrEqual(3);
-      expect(w.over, `seed ${seed} game over`).toBe('');
+      // v1.2 danger: some deaths, not a massacre (counted over all seeds below)
+      if (w.over) wipes++; deaths += w.stats.deaths;
+      const Rk = w.stats.roukha; retreats += Rk.retreats; hunts += Rk.hunts; pocket += w.stats.pocketMeals; fights += Rk.fights;
+      for (const k of Object.keys(Rk.packSizes)) expect(Number(k), `seed ${seed} hunting pack size`).toBeGreaterThanOrEqual(4);
+      expect(Rk.deadlocks, `seed ${seed} muster deadlocks`).toBe(0);
       expect(w.stats.mon.exceptions, `seed ${seed} exceptions`).toBe(0);
       expect(w.stats.mon.stuck, `seed ${seed} stuck`).toBeLessThan(6);
       expect(w.stats.mon.idle, `seed ${seed} idle`).toBeLessThan(6);
       // v1.1 teams: nothing deadlocks, solo trips stay rare, nobody shoots into the fog
       const T = w.stats.team;
       expect(T.deadlocks, `seed ${seed} team deadlocks`).toBe(0);
-      expect(T.solo / Math.max(1, T.departed), `seed ${seed} solo share`).toBeLessThan(0.1);
+      expect(T.solo / Math.max(1, T.departed), `seed ${seed} solo share`).toBeLessThan(0.15);   // v1.2: birds stay near their nests, so more jobs near camp count as low-risk
       expect(T.dragAloneTicks / Math.max(1, T.dragTicks), `seed ${seed} dragged alone`).toBeLessThan(0.05);
       expect(w.stats.mon.fogShots || 0, `seed ${seed} shots into fog`).toBe(0);
     }
+    expect(wipes, 'camps wiped out (of 12)').toBeLessThanOrEqual(2);
+    expect(deaths, 'some deaths over 12 x 20 days').toBeGreaterThan(0);
+    expect(hunts, 'hunting packs set out').toBeGreaterThan(100);
+    expect(fights, 'fights').toBeGreaterThan(30);
+    expect(retreats, 'packs retreat when losing').toBeGreaterThan(10);
+    expect(pocket, 'pocket meals eaten out there').toBeGreaterThan(20);
   }, 900000);
   it('a 60-day run of one seed stays sane', () => {
     const w = createWorld(77);

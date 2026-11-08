@@ -8,9 +8,9 @@
 
 **The Boss** is the highest rank. He sets the plan and always meets the trader's boat to sell beaks and buy rations and ammo. If he goes down, #2 takes over.
 
-**Hunting.** Hunters follow sign and blood, get in range, crouch, aim and shoot. A bird killed near camp is dragged home whole; a far one just loses its head. Beaks go to the boat.
+**Hunting.** Hunters follow sign and blood, get in range and shoot (see the firing sequence below). A bird killed near camp is dragged home whole; a far one just loses its head. Beaks go to the boat.
 
-**Fights and rescues.** Anyone who sees a bird close in fights, and a man on a rope drops it at once. Nobody sleeps while mates fight at camp. A downed man is dragged back and patched up before anything else.
+**Fights and rescues.** Anyone who sees a bird close shouts "Contact!" and fights, and a man on a rope drops it at once. Nobody sleeps while mates fight at camp. A downed man is dragged back and patched up before anything else.
 
 **The buddy system.** Nobody works alone outside the camp perimeter. A man with an outside job asks for help, 2 men usually, 3 for a big bird. Each mate answers one of three ways:
 - **"Right behind you":** he drops what he's doing.
@@ -20,3 +20,9 @@
 The team links up in camp, then walks out, works and walks home together. Birds are always a team job. If nobody comes in time, the team goes smaller; a short, safe daytime job goes solo; anything else is called off.
 
 **In camp,** mates help each other. More hands work faster and a bit better, but each extra man adds less.
+
+**The firing sequence (v1.2).** Every shot is a little routine you can watch: crouch, raise the rifle (half a second), aim for 1-2 seconds (a good shot aims faster; aiming longer is more accurate; a bird closing fast gets a snap shot), fire, then work the bolt for about a second before aiming again. Misses happen, especially at a running bird, so a fight takes several shots. When birds get in close it is rifle butt and bayonet.
+
+**Pocket rations (v1.2).** Food is counted in points; a full meal is 100. Before heading out of camp a man takes about 150 points of food that keeps (jerky first, then tinned rations) from the stores, never stripping them below a reserve. Out there, when he gets hungry and has a quiet moment, he eats from his pocket instead of walking back. Whatever he didn't eat goes back into the stores when he's home. Fresh food (meals, berries, raw meat) spoils, so it is never pocketed: with only fresh food in camp they walk back to eat, as before. A hungry man also eats before he turns in.
+
+**Feeling safe at home.** The camp is home. Inside the perimeter a man works alone; beyond it he wants a mate. The same rule, with other numbers, keeps the Roukha near their nests: see [ROUKHA_INTENT.md](ROUKHA_INTENT.md).

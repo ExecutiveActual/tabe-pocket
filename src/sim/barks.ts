@@ -6,7 +6,7 @@ import { Trait } from './config';
 export type BarkKey =
   | 'site' | 'unpack' | 'wood' | 'noWood' | 'fire' | 'latrine' | 'water' | 'forage' | 'fish' | 'hunt' | 'cook' | 'smoke'
   | 'eat' | 'hungryNoFood' | 'sleep' | 'wake' | 'watch' | 'watchAssign' | 'buddyAsk' | 'buddyYes' | 'noBuddy' | 'explore'
-  | 'roukha' | 'charge' | 'reload' | 'jam' | 'melee' | 'downed' | 'rescue' | 'treat' | 'allClear' | 'kill' | 'drag' | 'headOnly'
+  | 'roukha' | 'charge' | 'pocketEat' | 'reload' | 'jam' | 'melee' | 'downed' | 'rescue' | 'treat' | 'allClear' | 'kill' | 'drag' | 'headOnly'
   | 'sign' | 'call' | 'trail' | 'boat' | 'command' | 'build' | 'sick' | 'accident' | 'death' | 'timber' | 'bare' | 'social'
   | 'socialFail' | 'maint' | 'lowMorale' | 'rum'
   | 'teamAsk' | 'teamAsk3' | 'teamNow' | 'teamSec' | 'teamFirst' | 'teamGo' | 'teamSmaller' | 'teamSolo' | 'teamCancel' | 'assist' | 'ropeDrop';
@@ -26,6 +26,7 @@ export const BARKS: Record<BarkKey, Table> = {
   hunt: { any: ['Going after deer.', 'Hunting. Meat on the hoof out there.'], steadyHand: ['Hunting. One clean shot, no waste.'], jittery: ["Hunting! Something's getting shot today."] },
   cook: { any: ['Cooking. Nobody complain.', 'Supper on the fire.'] },
   smoke: { any: ['Smoking the meat so it keeps.', 'Meat on the racks.'] },
+  pocketEat: { any: ['Bit of jerky. Keeps me going.', 'Pocket lunch.', 'Chewing as I walk. Nearly.'], loner: ['Lunch. Quiet out here.'] },
   eat: { any: ['Grub time.', 'Eating. Leave me be.'], sociable: ['Eating. Join me, lads?'] },
   hungryNoFood: { any: ["Stores are empty. I'll find something.", "Belly's empty and so's the larder."] },
   sleep: { any: ['Turning in.', 'Bedroll. Wake me if the world ends.'], cautious: ['Turning in. Rifle within reach.'], nightOwl: ['Bed? It is barely evening.'] },
@@ -36,7 +37,7 @@ export const BARKS: Record<BarkKey, Table> = {
   buddyYes: { any: ['Right behind you.', 'Coming.'], sociable: ['Coming! Better than digging.'] },
   noBuddy: { any: ["Nobody free to come. I'll find closer work.", "Not going out there alone. Closer job, then."] },
   explore: { any: ['Scouting past the treeline.', "Let's see what's over there."] },
-  roukha: { any: ['Roukha!', 'Birds! {x} of them!', 'Roukha, eyes up!'], cautious: ['Roukha. Easy now, everyone together.'], bold: ["Roukha! Let's have 'em!"] },
+  roukha: { any: ['Contact! Roukha!', 'Contact! Birds in sight!', 'Contact, eyes up!'], cautious: ['Contact. Easy now, everyone together.'], bold: ["Contact! Let's have 'em!"] },
   charge: { any: ["They're charging!", "Here they come!"] },
   reload: { any: ['Reloading!', 'Loading!'] },
   jam: { any: ['Jammed! Blasted thing!', 'Gun jammed!'] },

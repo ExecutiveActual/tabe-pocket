@@ -101,7 +101,7 @@ describe('chain of command and requisitions', () => {
 describe('danger and rescue', () => {
   it('a downed scout is dragged back and patched up', () => {
     const w = createWorld(3, { noRoukha: true }); until(w, tickAt(1, 14));
-    const v = w.scouts[w.scouts.length - 1]; hurt(w, v, 999, 'test');
+    const v = w.scouts[w.scouts.length - 1]; hurt(w, v, v.hp, "test");   // just down (no overkill: a mortal wound could be lost on the table)
     runTicks(w, 3 * 250 * 10);
     expect(v.status === 'recovering' || v.status === 'ok').toBe(true);
     expect(w.stats.rescues).toBeGreaterThanOrEqual(1);

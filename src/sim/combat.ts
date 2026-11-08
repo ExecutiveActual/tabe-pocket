@@ -4,7 +4,7 @@
 import { CFG, FEATURES } from './config';
 import { Scout, World, Bird, rnd, dist, TPH, hourOf, isDark, tileOf, hasLOS, invAdd, invGet, newId, nearestPassable, addLog, tfx, hasTrait } from './core';
 import { able, say, mkAct, startAct, endAct, moveTo, built, fireLit, skillUp, HOOKS, campXY } from './ai';
-import { birdHit, deerHit, packOf } from './wild';
+import { birdHit, deerHit, packOf, gunfireNear } from './wild';
 
 const DT = 1 / CFG.TICK_HZ;
 
@@ -47,7 +47,7 @@ export function perceive(w: World, s: Scout): void {
     if (b.state === 'dead' || !canSee(w, s, b.x, b.y)) continue;
     count++;
     const d = dist(s.x, s.y, b.x, b.y); if (d < bd) { bd = d; best = b; }
-    const p = packOf(w, b); if (p && p.kind === 'wild') addIntel(w, p.id, b.x, b.y, 'seen', b.id);
+    const p = packOf(w, b); if (p && p.kind === 'home') addIntel(w, p.id, b.x, b.y, 'seen', b.id);
   }
   if (best) {
     const fresh = !s.threat || w.tick - s.threat.t > CFG.ALL_CLEAR_S * CFG.TICK_HZ;
@@ -92,7 +92,7 @@ export function combatTick(w: World, s: Scout): boolean {
   if (near) s.clearT = 0; else if (s.combat && fresh && ++s.clearT < CFG.COMBAT_CLEAR_HOLD) near = true;
   if (!near) {
     if (s.combat) {
-      s.combat = false; s.posture = 'stand'; if (s.act && s.act.kind === 'combat') endAct(w, s);
+      s.combat = false; s.posture = 'stand'; s.firePhase = ''; if (s.act && s.act.kind === 'combat') endAct(w, s);
       if (!fresh && (w.plan.warned['clear'] || 0) < w.tick) { w.plan.warned['clear'] = w.tick + 60; say(w, s, 'allClear'); }
     }
     return false;
@@ -140,7 +140,7 @@ export function combatTick(w: World, s: Scout): boolean {
   let gx = s.x, gy = s.y;
   if (dist(s.x, s.y, cx, cy) < 80 && dist(s.x, s.y, cx, cy) > 8) { gx = w.camp.fire.x; gy = w.camp.fire.y; s.act!.label = 'Falling back to the fire'; }
   else if (mates[0] && dist(mates[0].x, mates[0].y, s.x, s.y) > 8) { gx = mates[0].x; gy = mates[0].y; s.act!.label = 'Closing on ' + mates[0].name; }
-  if (dist(gx, gy, s.x, s.y) > 1) { s.posture = 'stand'; s.postureT = 0; if (moveTo(w, s, gx, gy, CFG.RUN_MS / CFG.WALK_MS) < 0) { s.act!.path = null; } }
+  if (dist(gx, gy, s.x, s.y) > 1) { s.posture = 'stand'; s.postureT = 0; if (s.firePhase !== 'bolt') s.firePhase = ''; if (moveTo(w, s, gx, gy, CFG.RUN_MS / CFG.WALK_MS) < 0) { s.act!.path = null; } }
   else { s.posture = 'crouch'; s.stillT = 0; }
   return true;
 }
@@ -152,32 +152,41 @@ function dropCarcass(w: World, s: Scout): void {
   s.carcassMode = '';
 }
 
-/** The aim-cone shooting model: crouch, settle aim, fire a real bullet with travel time. */
+/** The firing sequence and aim-cone model: crouch, present, aim (cone settles), fire a real bullet with travel time, work the bolt. */
 export function shootAt(w: World, s: Scout, id: number, tx: number, ty: number, hunting: boolean): void {
   const gunS = s.guns[0]; if (!gunS) return;
   const gun = CFG.GUNS[gunS.type];
   const d = dist(s.x, s.y, tx, ty); if (d < 0.01) return;
   s.fx = (tx - s.x) / d; s.fy = (ty - s.y) / d;
   if (s.jam > 0) { if (--s.jam === 0) addLog(w, s.name, 'cleared the jam', 'combat'); return; }
-  if (s.reload > 0) { if (--s.reload === 0) { const k = Math.min(gun.mag, s.ammo); s.mag += k; s.ammo -= k; } return; }
+  if (s.reload > 0) { s.firePhase = ''; if (--s.reload === 0) { const k = Math.min(gun.mag, s.ammo); s.mag += k; s.ammo -= k; s.firePhase = 'present'; s.fireT = CFG.PRESENT_TICKS; } return; }
   if (s.mag <= 0) {
     if (s.ammo <= 0 && dist(s.x, s.y, w.camp.pile.x, w.camp.pile.y) < 12) { const k = Math.min(CFG.CARRY_AMMO, Math.floor(invGet(w.camp.stock, 'ammo'))); invAdd(w.camp.stock, 'ammo', -k); s.ammo += k; }
     if (s.ammo > 0) { s.reload = gun.reload; if ((w.plan.warned['rl' + s.id] || 0) < w.tick) { w.plan.warned['rl' + s.id] = w.tick + 100; say(w, s, 'reload', {}, 'combat'); } }
     else s.thought = 'Out of ammunition!';
     return;
   }
-  if (s.posture !== 'crouch') { if (++s.postureT >= CFG.CROUCH_TICKS) { s.posture = 'crouch'; s.postureT = 0; } return; }
-  if (s.aimTarget !== id) { s.aimTarget = id; s.aimT = 0; }
+  // The firing sequence (v1.2): crouch -> present the rifle -> aim (1-2 s) -> fire -> work the bolt -> aim again.
+  if (s.posture !== 'crouch') { s.firePhase = ''; if (++s.postureT >= CFG.CROUCH_TICKS) { s.posture = 'crouch'; s.postureT = 0; s.firePhase = 'present'; s.fireT = CFG.PRESENT_TICKS; } return; }
+  if (s.firePhase === '') { s.firePhase = 'present'; s.fireT = CFG.PRESENT_TICKS; }
+  if (s.firePhase === 'present' || s.firePhase === 'bolt') { if (--s.fireT > 0) return; s.firePhase = 'aim'; s.aimT = 0; s.aimTarget = id; }
+  if (s.aimTarget !== id) { s.aimTarget = id; s.aimT = Math.floor(s.aimT * CFG.SWITCH_KEEP); }   // swinging onto a new bird loses most of the aim
   s.aimT++;
-  let need = CFG.AIM_TICKS * gun.aim * tfx(s, 'aim') * (s.hangover > w.tick ? CFG.HANGOVER_AIM_MUL : 1);
+  // aim time: 2 s for a raw shot, 1 s for a crack shot (skill), then traits, gun, wounds, hangover
+  const sk = Math.max(0, Math.min(1, s.skills.shooting / 100));
+  let need = (CFG.AIM_MAX_TICKS - (CFG.AIM_MAX_TICKS - CFG.AIM_MIN_TICKS) * sk) * gun.aim * tfx(s, 'aim') * (s.hangover > w.tick ? CFG.HANGOVER_AIM_MUL : 1);
   for (const i of s.injuries) need *= CFG.INJURIES[i].aimMul;
   if (hunting && hasTrait(s, 'steadyHand')) need *= 1.3;
   if (s.carcassMode === 'drag') need *= CFG.CARCASS_AIM_MUL;
+  if (!hunting && d < CFG.SNAP_M) need *= CFG.SNAP_MUL;   // a bird closing fast: snap shot, less aim
+  need = Math.max(3, Math.round(need));
+  s.aimNeed = need;
   if (s.aimT < need) return;
-  // fire: offset inside the aim cone, which has tightened with aim time
+  // fire: offset inside the aim cone, which tightens the longer he aims
   const settle = Math.min(1, s.aimT / CFG.CONE_SETTLE_TICKS);
   let cone = CFG.CONE_START - (CFG.CONE_START - CFG.CONE_MIN) * settle;
   cone *= CFG.CROUCH_CONE * gun.cone * tfx(s, 'cone') * (1.3 - s.skills.shooting / 200) * (s.morale < 30 ? 1.2 : 1);
+  const tb = w.birds.find((b) => b.id === id); if (tb && (tb.state === 'charge' || tb.state === 'flee')) cone *= CFG.MOVING_CONE;   // a running bird is harder to hit
   const off = (rnd(w) * 2 - 1) * cone * d;
   const ax = tx + -s.fy * off, ay = ty + s.fx * off; const ad = dist(s.x, s.y, ax, ay);
   const [lo, hi] = gun.dmg;
@@ -185,7 +194,8 @@ export function shootAt(w: World, s: Scout, id: number, tx: number, ty: number, 
   if (w.map.seen[tileOf(w, tx, ty)] !== 1) w.stats.mon.fogShots = (w.stats.mon.fogShots || 0) + 1;   // monitor: must stay 0
   if (s.carcassMode === 'drag') w.stats.mon.dragShots = (w.stats.mon.dragShots || 0) + 1;
   s.mag--; w.stats.shots++; w.stats.shotTicks.push(w.tick); if (w.stats.shotTicks.length > 200) w.stats.shotTicks.shift();
-  s.aimT = Math.floor(need * 0.35);
+  s.flashT = w.tick; s.aimT = 0;
+  s.firePhase = s.mag > 0 ? 'bolt' : ''; s.fireT = Math.round(CFG.BOLT_TICKS * gun.bolt);   // empty: the reload works the bolt too
   gunS.cond = Math.max(0, gunS.cond - CFG.GUN_WEAR_PER_SHOT);
   skillUp(s, 'shooting', 0.05);
   if (FEATURES.gear && gunS.cond < CFG.JAM_BELOW && rnd(w) < (CFG.JAM_BELOW - gunS.cond) / 300) { s.jam = CFG.JAM_CLEAR_TICKS; say(w, s, 'jam', {}, 'combat'); }
@@ -219,7 +229,7 @@ export function tickBullets(w: World): void {
       continue;
     }
     // near misses make birds flinch (a brief hesitation, not panic)
-    for (const o of w.birds) if (o.state !== 'dead' && segHit(b.x, b.y, b.dx, b.dy, len, o.x, o.y, CFG.FLINCH_M) >= 0) o.flinch = CFG.FLINCH_TICKS;
+    for (const o of w.birds) if (o.state !== 'dead' && segHit(b.x, b.y, b.dx, b.dy, len, o.x, o.y, CFG.FLINCH_M) >= 0) { o.flinch = CFG.FLINCH_TICKS; gunfireNear(w, o); }
     b.x += b.dx * len; b.y += b.dy * len; b.left -= len;
     if (b.left > 0.01) keep.push(b);
   }
@@ -259,4 +269,5 @@ export function killScout(w: World, s: Scout, cause: string): void {
 HOOKS.los = (w, ax, ay, bx, by) => hasLOS(w, ax, ay, bx, by);
 HOOKS.shoot = (w, s, id, x, y, hunting) => shootAt(w, s, id, x, y, hunting);
 HOOKS.see = (w, s, x, y) => canSee(w, s, x, y);
+HOOKS.kill = (w, s, cause) => killScout(w, s, cause);
 HOOKS.drop = (w, s) => dropCarcass(w, s);

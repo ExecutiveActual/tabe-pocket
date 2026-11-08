@@ -45,6 +45,7 @@ export interface Scout {
   needs: Record<NeedId, number>; purse: number; morale: number; thoughts: Thought[];
   carry: Inv; mag: number; ammo: number; reload: number; guns: { type: string; cond: number }[]; jam: number; gear: number; wound: number; stabilized: boolean;
   act: Act | null; posture: 'stand' | 'crouch'; postureT: number; aimT: number; aimTarget: number; cooldown: number;
+  firePhase: '' | 'present' | 'aim' | 'bolt'; fireT: number; flashT: number; aimNeed: number;   // firing sequence (combat.ts shootAt)
   thought: string; bark: string; barkUntil: number;
   threat: { id: number; x: number; y: number; t: number } | null; combat: boolean;
   sleeping: boolean; lastLeisure: number; idleT: number; stillT: number; failT: number;
@@ -52,6 +53,7 @@ export interface Scout {
   lastMeal: number; lastDrink: number; stress: number; sick: number; cool: Record<string, number>; why: string; combatFlips: number[]; carcassMode: '' | 'drag'; clearT: number;
   sickKind: string; injuries: string[]; medicUntil: number; hangover: number; grief: number; together: Record<number, number>; homeBound: boolean; shipped: boolean;
   promise: number;         // id of a leader he promised to join when his current job is done (-1 none)
+  pocket: Inv; snackT: number;   // v1.2 pocket rations (pocket.ts): non-spoiling food carried out of camp; ticks left eating it
 }
 
 export interface Deer { id: number; x: number; y: number; px: number; py: number; hp: number; herd: number; state: 'graze' | 'flee' | 'dead'; tx: number; ty: number; t: number }
@@ -62,10 +64,20 @@ export interface Bird {
   id: number; x: number; y: number; px: number; py: number; fx: number; fy: number; hp: number; pack: number;
   state: 'move' | 'charge' | 'flee' | 'idle' | 'dead'; tx: number; ty: number; target: number; peck: number;
   age: AgeClass; cracked: boolean; bleeding: boolean; flinch: number;
+  // v1.2: every bird belongs to a nest and runs the shared AI modules (needs, home comfort, help requests)
+  nest: number; needs: { hunger: number }; job: BirdJob; jobUntil: number; promise: number;
 }
+/** What a bird is doing: at home (loaf, feed, tend the nest, roost), mustering, out with a pack, fleeing home. */
+export type BirdJob = 'loaf' | 'feed' | 'tend' | 'roost' | 'muster' | 'pack' | 'flee';
+/** A Roukha nest: its birds feel safe within SPECIES.roukha.home.safeR of it. A hunt is mustered here. */
+export interface Nest { id: number; x: number; y: number; name: string; hatch: number; cool: number; muster: Muster | null }
+/** A hunting call at a nest: the shared request state plus who called and where they gather. */
+export interface Muster { need: number; urg: number; crew: number[]; promised: number[]; helpWith: number; phase: 'rally' | 'go'; waitT: number; asked: Record<number, number>; leader: number; rx: number; ry: number; posted: number }
 export interface Pack {
-  id: number; kind: 'raid' | 'wild'; members: number[]; state: 'roam' | 'approach' | 'stalk' | 'charge' | 'withdraw' | 'gone';
+  // kind 'home': a nest's resident flock (loafing and feeding near the nest, defends it); 'hunt': a hunting pack out from a nest
+  id: number; kind: 'home' | 'hunt'; members: number[]; state: 'home' | 'approach' | 'stalk' | 'charge' | 'return' | 'retreat' | 'gone';
   x: number; y: number; timer: number; target: number; size0: number; odds: number; spawned: number; reason: string; bull: number; bullLost: boolean; home: number;
+  stalkT: number; downs: number; shock: number; gun: number; fightT: number;   // stalk time left; fear: losses and wounds (shock), gunfire (gun, capped); fight start tick (-1 = none)
 }
 export interface Tree { id: number; x: number; y: number; size: number; wood: number; timber: number; felled: boolean; regrow: number; claim: number }
 export interface Bush { id: number; x: number; y: number; berries: number; regrow: number; claim: number; kind: string }
@@ -110,7 +122,11 @@ export interface TeamStats {
 export interface Stats {
   shots: number; hits: number; birdKills: number; deerKills: number; deaths: number; downs: number; rescues: number;
   charges: number; withdraws: number; roukhaHunts: number; seasonFees: number; beaksSold: number; debtDays: number; license: number; wages: number; packsSpawned: number; phantomWork: number; boatsDone: number; shotTicks: number[];
-  days: DayReport[]; mon: Monitors; team: TeamStats; dayMin: Record<number, Record<string, number>>; eaten: Inv; drank: number; leisure: Record<string, number>;
+  days: DayReport[]; mon: Monitors; team: TeamStats; roukha: RoukhaStats; pocketMeals: number; pocketPts: number; dayMin: Record<number, Record<string, number>>; eaten: Inv; drank: number; leisure: Record<string, number>;
+}
+export interface RoukhaStats {
+  musters: number; hunts: number; musterCancel: number; deadlocks: number; now: number; promise: number; helpFirst: number;
+  packSizes: Record<number, number>; retreats: number; scatters: number; returns: number; flees: number; defends: number; fights: number; fightTicks: number;
 }
 export interface Command { tick: number; player: string; kind: string; args: Record<string, number | string> }
 
@@ -120,7 +136,7 @@ export interface World {
   seed: number; tick: number; rng: number; nextId: number;
   map: MapData; landing: { x: number; y: number; sx: number; sy: number }; wind: { x: number; y: number };
   scouts: Scout[]; deer: Deer[]; birds: Bird[]; packs: Pack[]; trees: Tree[]; bushes: Bush[]; fish: FishSpot[];
-  carcasses: Carcass[]; gatherings: Gathering[]; bullets: Bullet[]; signs: Sign[]; intel: Intel[]; waterPts: number[]; rookeries: { id: number; x: number; y: number; eggs: number }[]; departed: string[]; spare: { type: string; cond: number }[];
+  carcasses: Carcass[]; gatherings: Gathering[]; bullets: Bullet[]; signs: Sign[]; intel: Intel[]; waterPts: number[]; rookeries: { id: number; x: number; y: number; eggs: number }[]; nests: Nest[]; departed: string[]; spare: { type: string; cond: number }[];
   camp: Camp; boat: Boat; ledger: Ledger;
   plan: { commander: number; goals: Goal[]; watch: { id: number; until: number }; warned: Record<string, number> };
   weather: 'clear' | 'rain' | 'storm' | 'fog'; difficulty: string; season: number; deerRespawn: number; grief: number; scentBoost: number; pendingBuild: string;

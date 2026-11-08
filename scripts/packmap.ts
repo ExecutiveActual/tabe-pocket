@@ -13,5 +13,5 @@ const ids = new Uint8Array(n * n);
 rows.forEach((r, y) => { for (let x = 0; x < n; x++) { const v = MAP_CHARS[r[x]]; if (v === undefined) throw new Error(`unknown map char '${r[x]}' at ${x},${y}`); ids[y * n + x] = v; } });
 const b64 = packTiles(ids);
 const back = unpackTiles(b64, n * n); for (let i = 0; i < n * n; i++) if (back[i] !== ids[i]) throw new Error('round trip failed at ' + i);
-writeFileSync(`data/${name}.packed.json`, JSON.stringify({ name: meta.name, n, tileM: meta.tileM, landing: meta.landing, rookeries: meta.rookeries, tiles: b64 }) + '\n');
+writeFileSync(`data/${name}.packed.json`, JSON.stringify({ name: meta.name, n, tileM: meta.tileM, landing: meta.landing, rookeries: meta.rookeries, nests: meta.nests || [], tiles: b64 }) + '\n');
 console.log(`data/${name}.packed.json: ${n}x${n}, ${(b64.length / 1024).toFixed(0)} KB base64`);

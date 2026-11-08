@@ -3,7 +3,8 @@
 //   feasibility checked BEFORE claiming)  ->  danger override (combat.ts, runs first each tick).
 // A scout picks the best-scoring option among need activities, leisure/training (data in config) and open
 // camp goals, then commits to it until it finishes, fails with a reason, or an urgent need/danger interrupts.
-import { CFG, FEATURES, NEED_IDS, NeedId, Item, ActivityDef, EXPORTS, SkillId, AGE, AgeClass, ITEM_LABEL } from './config';
+import { urgency, decayNeeds } from './agent/needs';
+import { CFG, SPECIES, FEATURES, NEED_IDS, NeedId, Item, ActivityDef, EXPORTS, SkillId, AGE, AgeClass, ITEM_LABEL, FOOD } from './config';
 import {
   Act, Scout, World, Goal, Build, rnd, rint, dayOf, dist, clamp, TPH, hourOf, period, isDark,
   invGet, invAdd, invWeight, tileOf, tileCenter, findPath, nearestPassable, addLog, SPEED_MUL, terrainAt, newId, PASSABLE, tfx, hasTrait, wakeOffset,
@@ -135,7 +136,9 @@ export function hurt(w: World, s: Scout, dmg: number, cause: string): void {
   if (s.status === 'dead' || s.status === 'downed') return;
   s.hp -= dmg;
   if (s.hp <= 0) {
-    s.hp = 0; s.status = 'downed'; s.wound = 10; s.stabilized = false; w.stats.downs++;
+    // how bad: a base, a random part and how far past zero the blow went (v1.2, PLACEHOLDER knobs)
+    s.wound = Math.min(95, CFG.DOWN_WOUND[0] + rnd(w) * (CFG.DOWN_WOUND[1] - CFG.DOWN_WOUND[0]) - s.hp * CFG.OVERKILL_WOUND);
+    s.hp = 0; s.status = 'downed'; s.stabilized = false; w.stats.downs++;
     addLog(w, s.name, `is down (${cause})`, 'combat'); say(w, s, 'downed', {}, 'combat');
     // his shout wakes the camp
     for (const o of w.scouts) if (o.sleeping && dist(o.x, o.y, s.x, s.y) < CFG.SHOUT_M) { o.sleeping = false; if (o.act && o.act.kind === 'sleep') endAct(w, o); }
@@ -155,9 +158,11 @@ function sharers(w: World, s: Scout): Scout[] { const out = crewOf(w, s); for (c
 
 // ---------- needs and morale ----------
 const NEED_WORD: Record<NeedId, string> = { food: 'Hungry', water: 'Thirsty', rest: 'Exhausted', warmth: 'Cold', social: 'Lonely', fitness: 'Out of shape' };
+const DECAY_CORE = NEED_IDS.filter((n) => n !== 'rest' && n !== 'warmth' && n !== 'social' && n !== 'fitness');
+const DECAY_ALL = NEED_IDS.filter((n) => n !== 'rest' && n !== 'warmth');
 export function tickNeeds(w: World, s: Scout): void {
   const tph = TPH(), h = hourOf(w.tick);
-  for (const n of NEED_IDS) if (n !== 'rest' && n !== 'warmth' && (FEATURES.leisure || (n !== 'social' && n !== 'fitness'))) s.needs[n] = Math.max(0, s.needs[n] - CFG.NEED_DECAY_H[n] / tph);
+  decayNeeds(s.needs as unknown as Record<string, number>, FEATURES.leisure ? DECAY_ALL : DECAY_CORE, SPECIES.scout.needs, tph);   // shared needs module
   if (s.sleeping) s.needs.rest = Math.min(100, s.needs.rest + CFG.SLEEP_GAIN_H / tph);
   else s.needs.rest = Math.max(0, s.needs.rest - CFG.NEED_DECAY_H.rest / tph);
   // warmth: cold at night or in rain, unless by a lit fire (bedrolls are around the fire)
@@ -214,12 +219,7 @@ export function tickMorale(w: World, s: Scout): void {
 }
 
 // ---------- scoring helpers ----------
-function urg(v: number, seek: number): number {
-  if (v >= seek) return ((100 - v) / 100) * 0.3;
-  let u = ((seek - v) / seek) * 2 + 0.3;
-  if (v < CFG.NEED_URGENT) u += 2;
-  return u;
-}
+const urg = (v: number, seek: number): number => urgency(v, seek, CFG.NEED_URGENT);   // shared needs module
 function foodAvailable(w: World, s: Scout): Item | '' {
   for (const k of CFG.EAT_PREF) if (invGet(s.carry, k) >= 1) return k;
   if (!w.camp.sited) return '';
@@ -282,6 +282,7 @@ export function decide(w: World, s: Scout): void {
     else if (dark && s.needs.rest < 92) sc = 3 + (100 - s.needs.rest) / 50;
     else if (per === 'evening' && h >= 20.5 && s.needs.rest < 80) sc = 1.5;
     else if (s.needs.rest < 20) sc = 2.5;
+    if (sc > 0 && s.needs.food < CFG.NEED_SEEK.food && s.needs.rest > CFG.NEED_URGENT / 2 && foodAvailable(w, s)) sc = Math.min(sc, CFG.SUPPER_FIRST);   // v1.2: a hungry man eats before he turns in
     if (sc > 0 && !alert) cands.push({ score: sc + jitter(), why: 'tired', make: () => sleepAct(w, s) });
   }
   if (s.needs.warmth < CFG.NEED_SEEK.warmth && fireLit(w)) {
@@ -381,7 +382,7 @@ function drinkAct(w: World, s: Scout): Act | null {
   const caskOk = w.camp.sited && stock(w, 'water') >= 1;
   const dCask = caskOk ? dist(s.x, s.y, w.camp.cask.x, w.camp.cask.y) : 1e9;
   const dPt = pt ? dist(s.x, s.y, pt[0], pt[1]) : 1e9;
-  const ptFar = pt ? distCamp(w, pt[0], pt[1]) > CFG.FAR_M && dist(s.x, s.y, pt[0], pt[1]) > 25 : true;
+  const ptFar = pt ? distCamp(w, pt[0], pt[1]) > SPECIES.scout.home.safeR && dist(s.x, s.y, pt[0], pt[1]) > 25 : true;
   if (caskOk && (dCask <= dPt + 10 || ptFar)) return mkAct('drink', 'Drinking from the cask', '', w.camp.cask.x, w.camp.cask.y, { mode: 'cask', urgent: s.needs.water < CFG.NEED_URGENT });
   if (!pt || (ptFar && s.needs.water > CFG.NEED_URGENT)) return null; // no lone trips for a drink unless desperate
   return mkAct('drink', 'Drinking at the stream', '', pt[0], pt[1], { mode: 'stream', urgent: s.needs.water < CFG.NEED_URGENT });
@@ -418,7 +419,7 @@ function freeHands(w: World, s: Scout): number { return w.scouts.filter((x) => x
 function sp(w: World, x: number, y: number): [number, number] { return nearestPassable(w, x, y, 4) || [x, y]; }
 function makeJob(w: World, s: Scout, g: Goal): Act | null {
   const [cx, cy] = campXY(w);
-  const far = (x: number, y: number): boolean => dist(x, y, cx, cy) > CFG.FAR_M;
+  const far = (x: number, y: number): boolean => dist(x, y, cx, cy) > SPECIES.scout.home.safeR;
   const canGoFar = (): boolean => (s.cool['far'] || 0) < w.tick && freeHands(w, s) > 0;
   switch (g.kind) {
     case 'build': {
@@ -561,6 +562,7 @@ function frontier(w: World, s: Scout): [number, number] | null {
     const px = (x + 0.5) * CFG.TILE_M, py = (y + 0.5) * CFG.TILE_M; const dc = dist(px, py, cx, cy);
     if (dc > CFG.EXPLORE_MAX_M) continue;
     if (w.rookeries.some((r) => seen(w, r.x, r.y) && dist(px, py, r.x, r.y) < CFG.ROOKERY_GUARD_M + 15)) continue;
+    if (w.nests.some((r) => seen(w, r.x, r.y) && dist(px, py, r.x, r.y) < SPECIES.roukha.home.safeR + CFG.NEST_AVOID_PAD_M)) continue;   // known nests: leave them be
     cands.push({ x: px, y: py, sc: dc + dist(px, py, s.x, s.y) * 0.5 });
   }
   cands.sort((a, b) => a.sc - b.sc);
@@ -574,7 +576,7 @@ export function runAct(w: World, s: Scout): void {
   // outside work: post a request and wait at the rally point until the team has formed (see team.ts)
   if (a.needBuddy && (!a.team || a.team.phase === 'rally')) { if (leaderRally(w, s, a)) return; }
   // the whole team got split up out there (mates down, gone back or far off): a two-man job is not finished alone
-  if (a.team && a.team.phase === 'go' && a.kind !== 'home' && distCamp(w, s.x, s.y) > CFG.FAR_M && teamLost(w, s)) {
+  if (a.team && a.team.phase === 'go' && a.kind !== 'home' && distCamp(w, s.x, s.y) > SPECIES.scout.home.safeR && teamLost(w, s)) {
     if (s.carcassMode === 'drag') HOOKS.drop(w, s);
     if (a.goal) s.cool['goal:' + a.goal] = w.tick + 0.5 * TPH();
     say(w, s, 'teamCancel', { x: a.team.noun });
@@ -585,7 +587,7 @@ export function runAct(w: World, s: Scout): void {
   const r = stepAct(w, s, a);
   if (s.act !== a) return;
   // a team that finishes (or gives up) out there walks back to camp together before splitting up
-  if ((r === 'done' || r === 'fail') && a.team && a.team.phase === 'go' && a.kind !== 'home' && crewOf(w, s).length > 0 && distCamp(w, s.x, s.y) > CFG.FAR_M) {
+  if ((r === 'done' || r === 'fail') && a.team && a.team.phase === 'go' && a.kind !== 'home' && crewOf(w, s).length > 0 && distCamp(w, s.x, s.y) > SPECIES.scout.home.safeR) {
     const [hx, hy] = fireSeat(w, s, 7);
     if (r === 'fail' && a.goal) s.cool['goal:' + a.goal] = w.tick + 0.3 * TPH();
     a.kind = 'home'; a.label = 'Heading back to camp'; a.tx = hx; a.ty = hy; a.step = 0; a.path = null; a.goal = ''; s.thought = a.label;
@@ -619,7 +621,7 @@ function stepAct(w: World, s: Scout, a: Act): R {
       if (!it || s.needs.food >= 95) return a.n > 0 ? 'done' : 'fail';
       if (a.n === 0) say(w, s, 'eat');
       invAdd(src, it, -1); a.n++;
-      s.needs.food = Math.min(100, s.needs.food + (CFG.FOOD_VALUE[it] || 0));
+      s.needs.food = Math.min(100, s.needs.food + (FOOD[it]?.pts || 0));
       invAdd(w.stats.eaten, it, 1);
       if (it === 'meal') { s.lastMeal = w.tick; if (rnd(w) < CFG.POISON_PER_MEAL * (1.5 - (bestCook(w)?.skills.cooking ?? 30) / 100) * tfx(s, 'sick')) fallSick(w, s, 'poisoning'); }
       return 'run';
@@ -783,7 +785,7 @@ function stepAct(w: World, s: Scout, a: Act): R {
     case 'hunt': return huntStep(w, s, a);
     case 'rhunt': return rhuntStep(w, s, a);
     case 'explore': { const m = go(w, s, a.tx, a.ty); if (m < 0) return 'fail'; return m === 0 ? 'done' : 'run'; }
-    case 'home': { const m = go(w, s, a.tx, a.ty); if (m < 0) return 'fail'; return m === 0 || distCamp(w, s.x, s.y) < CFG.FAR_M * 0.5 ? 'done' : 'run'; }
+    case 'home': { const m = go(w, s, a.tx, a.ty); if (m < 0) return 'fail'; return m === 0 || distCamp(w, s.x, s.y) < SPECIES.scout.home.safeR * 0.5 ? 'done' : 'run'; }
     case 'buddy': return buddyStep(w, s, a);
     case 'assist': return assistStep(w, s, a);
     case 'load': {
@@ -854,6 +856,10 @@ function rescueStep(w: World, s: Scout, a: Act): R {
   v.stabilized = true;  // Medicine: wounds stop worsening once he's being worked on
   if (!work(w, s, CFG.TREAT_H * 2 * (1.4 - s.skills.medicine / 120), 'medicine')) return 'run';
   let meds = stock(w, 'meds') >= 1; if (meds) invAdd(w.camp.stock, 'meds', -1); else if (stock(w, 'herbs') >= CFG.HERBS_PER_MED) { invAdd(w.camp.stock, 'herbs', -CFG.HERBS_PER_MED); meds = true; }
+  // a mortal wound: past MORTAL_WOUND even good hands may lose him (better medicine, better odds)
+  if (v.wound > CFG.MORTAL_WOUND && rnd(w) < ((v.wound - CFG.MORTAL_WOUND) / (100 - CFG.MORTAL_WOUND)) * (1.25 - s.skills.medicine / 200) * (meds ? 1 : 1.5)) {
+    v.draggedBy = -1; HOOKS.kill(w, v, 'his wounds under ' + s.name + "'s hands"); return 'done';
+  }
   v.status = 'recovering'; v.draggedBy = -1; v.recover = CFG.RECOVER_H * TPH() * (meds ? 1 : 1.8) * (1 + v.wound / 100);
   v.maxHp = Math.max(40, v.maxHp - Math.round(v.wound * CFG.WOUND_MAXHP_LOSS)); v.hp = Math.max(v.hp, 25);
   if (FEATURES.injuries && rnd(w) < v.wound * CFG.INJURY_PER_WOUND) { const opts = Object.keys(CFG.INJURIES).filter((k) => v.injuries.indexOf(k) < 0); if (opts.length) { const k = opts[rint(w, 0, opts.length - 1)]; v.injuries.push(k); addLog(w, v.name, 'will carry this one: ' + CFG.INJURIES[k].label.toLowerCase(), 'event'); } }
@@ -936,13 +942,16 @@ export const HOOKS = {
   los: (w: World, ax: number, ay: number, bx: number, by: number): boolean => { void w; void ax; void ay; void bx; void by; return true; },
   shoot: (w: World, s: Scout, id: number, x: number, y: number, hunting: boolean): void => { void w; void s; void id; void x; void y; void hunting; },
   see: (w: World, s: Scout, x: number, y: number): boolean => { void w; void s; void x; void y; return true; },
+  kill: (w: World, s: Scout, cause: string): void => { void w; void s; void cause; },
   drop: (w: World, s: Scout): void => { void w; void s; },
 };
 
 // ---------- the commander's camp plan ----------
 export function foodPoints(w: World): number {
   const st = w.camp.stock;
-  return invGet(st, 'meal') * 40 + invGet(st, 'smoked') * 32 + invGet(st, 'berries') * 9 + invGet(st, 'ration') * 35 + (invGet(st, 'rawMeat') + invGet(st, 'rawFish')) * 36;
+  let p = 0; for (const k in FOOD) p += invGet(st, k as Item) * (FOOD[k as Item]?.pts || 0);   // points (a full meal = 100)
+  for (const s of w.scouts) if (s.status !== 'dead') for (const k in s.pocket) p += (s.pocket[k as Item] || 0) * (FOOD[k as Item]?.pts || 0);   // pocket rations are still the camp's food
+  return p;
 }
 export function planTick(w: World): void {
   const c = commander(w);

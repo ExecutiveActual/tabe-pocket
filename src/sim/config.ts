@@ -103,10 +103,10 @@ export const CFG = {
 
   // ---- World ----
   LOG_MAX: 400,                // log entries kept in the world (each has a running number for readers)
-  MAP_TILES: 600,              // the fixed island is 600x600 tiles (1.2 km), several in-game days to cross on foot
+  MAP_TILES: 768,              // the fixed island is 768x768 tiles (1.5 km a side), data/maps/tabe_big.txt (info only: the map file decides)
   MAP_CONTENT_SEED: 1947,      // fixed salt for groves/bushes so content is the same every game
   TILE_M: 2,                   // metres per tile
-  REVEAL_DAY_M: 30, REVEAL_NIGHT_M: 16, // fog-of-war reveal radius around each scout
+  REVEAL_DAY_M: 30, REVEAL_NIGHT_M: 16, // MINIMUM fog reveal radius; scouts reveal their full sight radius (combat.sightOf)
   LANDING_REVEAL_M: 70,        // what they saw coming in on the boat
   TREE_DENSITY_FOREST: 0.33, TREE_DENSITY_GRASS: 0.015,
   BUSH_DENSITY: 0.012,
@@ -134,6 +134,7 @@ export const CFG = {
   TRAIL_MAX: 400, TRAIL_DECAY_H: 0.25,
   TRAIL_LEVELS: [{ at: 40, mul: 1.12 }, { at: 150, mul: 1.25 }],
   SPAWN_RING_M: 80,            // raid packs and roamers appear this far beyond their minimum distance from camp
+  SPAWN_HIDE_M: 120,           // ...and never inside this distance of any scout (>= the best watch sight, so spawns stay unseen)
   FORAGE_MAX_M: 220,           // day-trip radius for foraging and traps
   FISH_SPOT_DENSITY: 0.01, TRAPS_MAX: 4, SET_TRAP_H: 1.0,
   TREE_WOOD_PER_SIZE: 6,       // PLACEHOLDER firewood (deadwood) units per tree size step
@@ -158,11 +159,36 @@ export const CFG = {
   SKILL_GAIN_PER_H: 0.6,       // PLACEHOLDER skill points per hour of doing the matching activity (cap 100)
   WAGE_PER_DAY: 3,             // PLACEHOLDER flat wage per scout per day, a running cost on the ledger
   WALK_MS: 1.7,                // metres per sim-second (+10% vs the old slice)
+  SCOUT_SPEED_MUL: 1.25,       // PLACEHOLDER v1.1: all scout movement (walk, run, drag) x1.25
   RUN_MS: 2.6,
   DRAG_MS: 0.7,
   CARRY_CAP: 8,                // weight units a scout can carry
   WEIGHT: { wood: 2, timber: 8, berries: 0.5, rawMeat: 1, rawFish: 1, meal: 1, ration: 0.5, rawHide: 2, hide: 2, water: 1, ammo: 0.05, meds: 0.5, tobacco: 0.2, smoked: 0.6, rum: 0.5, leaf: 0.2, tools: 2, canvas: 3, eggs: 0.3, herbs: 0.2, carcJ: 0, carcA: 0, carcB: 0, beakJ: 0.5, beakA: 0.5, beakB: 0.5, beakCr: 0.5, feathers: 0.5, talons: 0.3 } as Record<Item, number>,
-  FAR_M: 45,                   // work farther than this from camp takes a buddy
+  EXPLORE_PUSH_M: 35,          // PLACEHOLDER explorers walk this far past the edge of the known ground
+  FAR_M: 40,                   // PLACEHOLDER the camp perimeter: work beyond this from camp is done as a team
+  // ---- Teams (v1.1): outside work is done in pairs or threes; in-camp work goes faster with helpers ----
+  // Men needed for each outside job, counting the man who asks. Looting a bird scales with its age class.
+  TEAM_SIZE: { chop: 2, fell: 3, forage: 2, fish: 2, fetchWater: 2, hunt: 2, rhunt: 3, explore: 2, lootJ: 2, lootA: 2, lootB: 3, lootDeer: 2 } as Record<string, number>,  // PLACEHOLDER
+  TEAM_URGENCY: { loot: 2.7 } as Record<string, number>,   // PLACEHOLDER request urgency by job (others use their goal priority)
+  TEAM_DROP_MARGIN: 0.3,       // PLACEHOLDER a man drops what he's doing if its value + this <= the request's urgency
+  TEAM_PROMISE_MAX_H: 0.35,    // PLACEHOLDER "gimme a sec": he promises to come if his job is done within this many hours
+  TEAM_LINK_M: 6,              // the team leaves once everyone is within this of the leader
+  TEAM_WAIT_H: 0.8,            // PLACEHOLDER with nobody coming after this long the leader falls back (smaller team, or cancel)
+  TEAM_WAIT_MAX_H: 1.6,        // PLACEHOLDER ...and even with promises outstanding, after this long
+  TEAM_REASK_H: 0.2,           // a man who said no is asked again after this long
+  TEAM_SOLO_MAX_M: 80,         // PLACEHOLDER fallback: a low-risk job (wood, water, forage, traps, daytime) may go solo only this close
+  TEAM_SOLO_INTEL_M: 120,      // ...and only with no fresh Roukha sign within this of the job
+  TEAM_RALLY_MATE_M: 25,       // a leader outside camp re-forms his team on the spot if a mate is this close; else he walks home
+  JOIN_SCORE_MUL: 1.0,         // decide(): joining an open team request scores urgency x this
+  // Joint work: total output of 1, 2, 3, 4 men on one job (diminishing returns). Quality bonus by number of helpers.
+  TEAM_WORK: [1, 1.6, 1.95, 2.15],          // PLACEHOLDER
+  TEAM_QUALITY: [0, 0.08, 0.12, 0.14],      // PLACEHOLDER e.g. processing yield and cooking stretch with helpers
+  ASSIST_RANGE_M: 7,           // a helper counts when this close to the man doing the job
+  ASSIST_SCORE_MUL: 0.75,      // PLACEHOLDER decide(): helping a mate's camp job scores his job priority x this x the marginal gain
+  ASSIST_MIN_LEFT_H: 0.12,     // not worth joining a job with less than this left
+  ASSIST_MAX: { build: 3, cook: 1, smokeMeat: 1, process: 2, scrape: 1, chop: 1, fell: 2 } as Record<string, number>,  // PLACEHOLDER helpers per job
+  LOOT_BIRD_PRI: 2.7,          // PLACEHOLDER recovering a known bird carcass: a HIGH priority team job (rescue 3.6, fuel 3.0 are above it)
+  CARCASS_DRAG_TEAM: [0.45, 0.45, 0.72, 0.85],  // PLACEHOLDER drag speed multiplier by number of men on the rope (index = men)
   LONE_LIMIT_M: 60,            // beyond this from camp, nobody should be alone (test bound)
   LONE_GRACE_S: 45,            // ...except briefly (e.g. walking home after his buddy was pulled into a fight)
   BUDDY_KEEP_M: 10,            // follower tries to stay this close

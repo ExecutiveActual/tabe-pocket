@@ -35,6 +35,12 @@ describe('soak', () => {
       expect(w.stats.mon.exceptions, `seed ${seed} exceptions`).toBe(0);
       expect(w.stats.mon.stuck, `seed ${seed} stuck`).toBeLessThan(6);
       expect(w.stats.mon.idle, `seed ${seed} idle`).toBeLessThan(6);
+      // v1.1 teams: nothing deadlocks, solo trips stay rare, nobody shoots into the fog
+      const T = w.stats.team;
+      expect(T.deadlocks, `seed ${seed} team deadlocks`).toBe(0);
+      expect(T.solo / Math.max(1, T.departed), `seed ${seed} solo share`).toBeLessThan(0.1);
+      expect(T.dragAloneTicks / Math.max(1, T.dragTicks), `seed ${seed} dragged alone`).toBeLessThan(0.05);
+      expect(w.stats.mon.fogShots || 0, `seed ${seed} shots into fog`).toBe(0);
     }
   }, 900000);
   it('a 60-day run of one seed stays sane', () => {

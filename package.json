@@ -1,6 +1,6 @@
 {
   "name": "tabe-pocket-sim",
-  "version": "0.1.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "Beaks and Blood: Tabe Pocket autonomous scout sim (original work by Nicolas Lanza and Grok Bot)",
@@ -9,7 +9,10 @@
     "typecheck": "tsc --noEmit",
     "build": "node scripts/build.mjs",
     "summary": "tsx scripts/summary.ts",
-    "soak": "tsx scripts/soak.ts"
+    "soak": "tsx scripts/soak_report.ts",
+    "map:gen": "tsx scripts/genmap_big.ts",
+    "map:pack": "tsx scripts/packmap.ts",
+    "map:png": "python3 scripts/mappng.py data/maps/tabe_big shots/map_big.png"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",

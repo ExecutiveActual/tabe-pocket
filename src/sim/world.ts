@@ -1,6 +1,8 @@
 // World creation and the fixed-tick step. Pure and deterministic: no DOM, no clock, no Math.random.
-// v1 plays on the small landing-coast map; the full island (data/tabe.json) is for later
-import TABE from '../../data/pocket_v1.json';
+// v1.1 plays on the big pre-baked island: data/maps/tabe_big.txt (hand-editable), packed into
+// data/tabe_big.packed.json by scripts/packmap.ts and decoded once at startup.
+import TABE from '../../data/tabe_big.packed.json';
+import { packTiles, unpackTiles } from './mapdata';
 import { CFG, FEATURES, NAMES, TRAIT_PAIRS, TRAITS_PER_SCOUT, NEED_IDS, Item, SKILL_IDS, SkillId, COMPANY_NAME, Trait } from './config';
 import {
   World, Scout, Inv, T, rnd, rint, pick, dist, clamp, TPH, hourOf, dayOf, genTerrain, carveWater, tileCenter,
@@ -10,6 +12,7 @@ import {
 import { fallSick, commander, campAlert, able, decide, runAct, endAct, planTick, tickNeeds, tickMorale, campXY, fireLit, built, stock, cargoValue, orderCost, say, chainOrder, foodPoints } from './ai';
 import { perceive, combatTick, tickBullets, tickDowned } from './combat';
 import { directorTick, wildTick, deerTick } from './wild';
+import { teamTick } from './team';
 
 export interface WorldOpts { kind?: 'island' | 'arena'; noRoukha?: boolean; noBoat?: boolean; scouts?: number; scenario?: string; difficulty?: string }
 
@@ -32,6 +35,7 @@ export function blankWorld(seed: number, n: number): World {
     stats: {
       shots: 0, hits: 0, birdKills: 0, deerKills: 0, deaths: 0, downs: 0, rescues: 0, charges: 0, withdraws: 0, roukhaHunts: 0, seasonFees: 0, beaksSold: 0, debtDays: 0, license: 0, wages: 0,
       packsSpawned: 0, phantomWork: 0, boatsDone: 0, shotTicks: [], days: [], mon: { stuck: 0, idle: 0, oscillation: 0, lone: 0, exceptions: 0, notes: [] },
+      team: { requests: 0, departed: 0, full: 0, smaller: 0, solo: 0, cancelled: 0, waitTicks: 0, maxWait: 0, now: 0, promise: 0, helpFirst: 0, refused: 0, assists: 0, helpTicks: 0, outsideTicks: 0, soloOutsideTicks: 0, deadlocks: 0, dragTicks: 0, dragAloneTicks: 0 },
       dayMin: {}, eaten: {}, drank: 0, leisure: {},
     },
   };
@@ -57,7 +61,7 @@ export function makeScout(w: World, x: number, y: number, rank: number, skills: 
     needs: needsFull(), purse: 0, morale: 65, thoughts: [], carry: {}, mag: g.mag, ammo: CFG.CARRY_AMMO, reload: 0, guns, jam: 0, gear: 80 + rint(w, 0, 20), wound: 0, stabilized: false,
     act: null, posture: 'stand', postureT: 0, aimT: 0, aimTarget: -1, cooldown: 0, thought: '', bark: '', barkUntil: 0,
     threat: null, combat: false, sleeping: false, lastLeisure: 0, idleT: 0, stillT: 0, failT: 0,
-    hist: [], starts: [], joined: w.tick, tag: 'pack', lastMeal: 0, lastDrink: 0, stress: 0, sick: 0, cool: {}, why: '', combatFlips: [], clearT: 0, carcassMode: '', sickKind: '', injuries: [], medicUntil: 0, hangover: 0, grief: 0, together: {}, homeBound: false, shipped: false,
+    hist: [], starts: [], joined: w.tick, tag: 'pack', lastMeal: 0, lastDrink: 0, stress: 0, sick: 0, cool: {}, why: '', combatFlips: [], clearT: 0, carcassMode: '', sickKind: '', injuries: [], medicUntil: 0, hangover: 0, grief: 0, together: {}, homeBound: false, shipped: false, promise: -1,
   };
   for (const k of NEED_IDS) s.needs[k] = 75 + rint(w, 0, 20);
   for (const k of SKILL_IDS) s.skills[k] = clamp(s.skills[k] + rint(w, -5, 5), 0, 100);
@@ -66,7 +70,7 @@ export function makeScout(w: World, x: number, y: number, rank: number, skills: 
 
 export function createWorld(seed: number, opts: WorldOpts = {}): World {
   const kind = opts.kind || 'island';
-  const n = kind === 'arena' ? 70 : TABE.rows.length;
+  const n = kind === 'arena' ? 70 : TABE.n;
   const w = blankWorld(seed, n);
   w.flags.noRoukha = !!opts.noRoukha; w.flags.noBoat = !!opts.noBoat; w.flags.scenario = opts.scenario || '';
   w.difficulty = opts.difficulty || CFG.DEFAULT_DIFFICULTY;
@@ -219,6 +223,7 @@ export function step(w: World): void {
       s.act = null;
     }
   }
+  if (w.tick % CFG.DECIDE_EVERY === 0) teamTick(w);
   gatherTick(w);
   if (w.camp.fire.built && w.camp.fire.fuel > 0) {
     w.camp.fire.fuel -= (CFG.FIRE_BURN_H * (w.weather === 'rain' || w.weather === 'storm' ? 1.5 : 1)) / tph;
@@ -233,12 +238,12 @@ export function step(w: World): void {
 function maybeInterrupt(w: World, s: Scout, h: number): void {
   const a = s.act!;
   // the trader is in and the boss is off on something else (a buddy job, a chore): he drops it and goes
-  if (w.boat.state === 'docked' && !w.boat.pending && ['combat', 'rescue', 'treat', 'meetBoat', 'escort'].indexOf(a.kind) < 0 && commander(w) === s) { endAct(w, s, 'boat'); return; }
+  if (w.boat.state === 'docked' && !w.boat.pending && ['combat', 'rescue', 'treat', 'meetBoat', 'escort'].indexOf(a.kind) < 0 && commander(w) === s && !(s.carcassMode === 'drag' && a.team && a.team.crew.length > 0)) { endAct(w, s, 'boat'); return; }   // (a team hauling a bird home finishes first)
   // day work stops at dark: foragers, wood cutters and explorers head home with what they have
   if (isDark(h) && (a.kind === 'forage' || a.kind === 'chop' || a.kind === 'explore') && a.step < 2) { endAct(w, s, 'dark'); return; }
   // the camp is under attack: sleepers near the fire get up
   if (a.kind === 'sleep' && campAlert(w) && dist(s.x, s.y, w.camp.x, w.camp.y) < CFG.ALERT_M + 20) { endAct(w, s, 'alarm'); return; }
-  if (a.kind === 'watch' || a.kind === 'rescue' || a.kind === 'combat' || a.kind === 'buddy' || a.buddy >= 0) return;
+  if (a.kind === 'watch' || a.kind === 'rescue' || a.kind === 'combat' || a.kind === 'buddy' || (a.team && a.team.phase === 'go' && a.team.crew.length > 0)) return;
   const urgent = (s.needs.food < CFG.NEED_URGENT && a.kind !== 'eat') || (s.needs.water < CFG.NEED_URGENT && a.kind !== 'drink') || (s.needs.rest < CFG.NEED_URGENT / 2 && a.kind !== 'sleep');
   if (urgent && !a.urgent) { endAct(w, s, 'urgent need'); return; }
   const lateNight = (h >= 21 || h < 4) && ['eat', 'drink', 'sleep', 'warm', 'unpack'].indexOf(a.kind) < 0;
@@ -400,21 +405,55 @@ function monitors(w: World): void {
     m.morale = Math.min(m.morale === undefined ? 100 : m.morale, Math.round(s.morale));
     if (s.act && s.act.kind === 'idle' && openGoal && h >= 7 && h < 18) { if (++s.idleT === CFG.IDLE_LIMIT_S * CFG.TICK_HZ) { w.stats.mon.idle++; w.stats.mon.notes.push(`idle ${s.name} t${w.tick} open=${w.plan.goals.filter((g) => g.blockedUntil <= w.tick).map((g) => g.id).join(',')}`); } }
     else if (!s.act || s.act.kind !== 'idle') s.idleT = 0;
-    const far = dist(s.x, s.y, cx, cy) > CFG.LONE_LIMIT_M;
+    // (the landing counts as camp ground while the boat is in or its crates are on the beach: the boat crew is there)
+    const atBoat = (w.boat.state === 'docked' || Object.keys(w.boat.crate).length > 0) && dist(s.x, s.y, w.landing.x, w.landing.y) < 25;
+    const far = dist(s.x, s.y, cx, cy) > CFG.LONE_LIMIT_M && !atBoat;
     const buddy = w.scouts.some((o) => o !== s && o.status !== 'dead' && dist(o.x, o.y, s.x, s.y) < 20);
+    // team stats: time spent clearly outside the perimeter, and how much of it alone
+    if (w.camp.sited && dist(s.x, s.y, cx, cy) > CFG.FAR_M + 10) { w.stats.team.outsideTicks++; if (!buddy) w.stats.team.soloOutsideTicks++; }
+    if (s.carcassMode === 'drag' && w.camp.sited && dist(s.x, s.y, cx, cy) > CFG.FAR_M) { w.stats.team.dragTicks++;   // (inside the perimeter the last stretch can be done alone)
+      if (!w.scouts.some((o) => o !== s && able(o) && dist(o.x, o.y, s.x, s.y) < 8)) w.stats.team.dragAloneTicks++; }
     if (far && !buddy && w.camp.sited) { s.cool['loneT'] = (s.cool['loneT'] || 0) + 1; if (s.cool['loneT'] === CFG.LONE_GRACE_S * CFG.TICK_HZ) { w.stats.mon.lone++; w.stats.mon.notes.push(`lone ${s.name} t${w.tick} ${s.act ? s.act.kind : '-'} d=${Math.round(dist(s.x, s.y, cx, cy))}`); } }
     else s.cool['loneT'] = 0;
   }
 }
 
 // ---------- save, load, hash ----------
-/** Terrain of the fixed island from data/tabe.json. */
-export function islandTerrain(): number[] { const out: number[] = []; for (const r of TABE.rows as string[]) for (let i = 0; i < r.length; i++) out.push(MAP_CHARS[r[i]] ?? 0); return out; }
-/** Saves leave out the fixed island terrain (it's reloaded from the map file). */
-export function save(w: World): string { const t = w.map.terrain; const fixed = w.map.n === TABE.rows.length; if (fixed) w.map.terrain = []; const s = JSON.stringify(w); w.map.terrain = t; return s; }
-export function load(s: string): World { const w = JSON.parse(s) as World; if (!w.map.terrain.length) w.map.terrain = islandTerrain(); return w; }
+let ISLAND: Uint8Array | null = null;
+/** Terrain ids of the fixed island, decoded once from the packed map. */
+export function islandTiles(): Uint8Array { return ISLAND || (ISLAND = unpackTiles(TABE.tiles, TABE.n * TABE.n)); }
+export function islandTerrain(): number[] { return Array.from(islandTiles()); }
+export const ISLAND_N: number = TABE.n;
+// Saves are compact: the fixed terrain is left out, fog is run-length packed, and trees/bushes/fish spots are
+// stored only where they differ from the pristine island (content placement is the same every game).
+type Pristine = { trees: Map<number, string>; bushes: Map<number, string>; fish: Map<number, string>; w: World };
+let PRISTINE: Pristine | null = null;
+function pristine(): Pristine {
+  if (PRISTINE) return PRISTINE;
+  const w = createWorld(1, { noRoukha: true, noBoat: true });
+  const m = <T extends { id: number }>(a: T[]): Map<number, string> => new Map(a.map((x) => [x.id, JSON.stringify(x)]));
+  return (PRISTINE = { trees: m(w.trees), bushes: m(w.bushes), fish: m(w.fish), w });
+}
+export function save(w: World): string {
+  const fixed = w.map.n === TABE.n;
+  if (!fixed) return JSON.stringify(w);
+  const P = pristine();
+  const diff = <T extends { id: number }>(a: T[], base: Map<number, string>): T[] => a.filter((x) => base.get(x.id) !== JSON.stringify(x));
+  const out = { ...w, map: { ...w.map, terrain: [], seen: packTiles(w.map.seen) }, trees: diff(w.trees, P.trees), bushes: diff(w.bushes, P.bushes), fish: diff(w.fish, P.fish), compact: 1 };
+  return JSON.stringify(out);
+}
+export function load(s: string): World {
+  const raw = JSON.parse(s) as World & { compact?: number; map: { seen: unknown } };
+  if (!raw.compact) { const w = raw as World; if (!w.map.terrain.length) w.map.terrain = islandTerrain(); return w; }
+  const P = pristine(); const w = raw as World;
+  const merge = <T extends { id: number }>(base: T[], changed: T[]): T[] => { const c = new Map(changed.map((x) => [x.id, x])); return base.map((x) => c.get(x.id) || (JSON.parse(JSON.stringify(x)) as T)); };
+  w.trees = merge(P.w.trees, raw.trees); w.bushes = merge(P.w.bushes, raw.bushes); w.fish = merge(P.w.fish, raw.fish);
+  w.map.terrain = islandTerrain(); w.map.seen = Array.from(unpackTiles(raw.map.seen as unknown as string, w.map.n * w.map.n));
+  delete (w as World & { compact?: number }).compact;
+  return w;
+}
 export function hashWorld(w: World): string {
-  const s = JSON.stringify(w);
+  const s = save(w);
   let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(16);
 }
 export function runTicks(w: World, n: number): void { for (let i = 0; i < n; i++) step(w); }

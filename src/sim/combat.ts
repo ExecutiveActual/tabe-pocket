@@ -22,14 +22,20 @@ export function canSee(w: World, s: Scout, x: number, y: number): boolean {
   const d = dist(s.x, s.y, x, y);
   let r = sightOf(w, s);
   if (fireLit(w) && dist(x, y, w.camp.fire.x, w.camp.fire.y) < CFG.FIRE_LIGHT_M) r = Math.max(r, 45);
-  return d <= r && hasLOS(w, s.x, s.y, x, y);
+  // nothing in the fog can be seen (or shot): the reveal radius in perceive() is the same sight radius
+  return d <= r && w.map.seen[tileOf(w, x, y)] === 1 && hasLOS(w, s.x, s.y, x, y);
 }
+// last reveal per scout (tile + radius); a cache only, so skipping a repeat reveal can't change the sim
+const LAST_REVEAL = new WeakMap<World, Map<number, number>>();
 
 export function perceive(w: World, s: Scout): void {
-  // fog of war: reveal what he can see
-  const r = Math.max(isDark(hourOf(w.tick)) ? CFG.REVEAL_NIGHT_M : CFG.REVEAL_DAY_M, 0), n = w.map.n;
-  if (!s.sleeping) {
-    const rt = Math.ceil(r / CFG.TILE_M), cx = Math.floor(s.x / CFG.TILE_M), cy = Math.floor(s.y / CFG.TILE_M);
+  // fog of war: reveal everything inside his sight radius (so anything he can see or shoot is on the map)
+  const r = Math.max(sightOf(w, s), isDark(hourOf(w.tick)) ? CFG.REVEAL_NIGHT_M : CFG.REVEAL_DAY_M), n = w.map.n;
+  const cx = Math.floor(s.x / CFG.TILE_M), cy = Math.floor(s.y / CFG.TILE_M), rt = Math.ceil(r / CFG.TILE_M);
+  let lr = LAST_REVEAL.get(w); if (!lr) LAST_REVEAL.set(w, (lr = new Map()));
+  const key = (cy * n + cx) * 256 + Math.min(255, rt);
+  if (!s.sleeping && lr.get(s.id) !== key) {
+    lr.set(s.id, key);
     for (let y = cy - rt; y <= cy + rt; y++) for (let x = cx - rt; x <= cx + rt; x++) {
       if (x < 0 || y < 0 || x >= n || y >= n) continue;
       if ((x - cx) * (x - cx) + (y - cy) * (y - cy) <= rt * rt) w.map.seen[y * n + x] = 1;
@@ -140,7 +146,7 @@ export function combatTick(w: World, s: Scout): boolean {
 }
 function dropCarcass(w: World, s: Scout): void {
   for (const k of ['carcJ', 'carcA', 'carcB'] as const) if (invGet(s.carry, k) >= 1) {
-    invAdd(s.carry, k, -1);
+    invAdd(s.carry, k, -1); say(w, s, 'ropeDrop', {}, 'combat');   // the rope goes down instantly; the team picks it up again after
     w.carcasses.push({ id: newId(w), x: s.x, y: s.y, kind: 'bird', claim: -1, t: w.tick, age: k === 'carcB' ? 'B' : k === 'carcA' ? 'A' : 'J', cracked: false });
   }
   s.carcassMode = '';
@@ -176,6 +182,8 @@ export function shootAt(w: World, s: Scout, id: number, tx: number, ty: number, 
   const ax = tx + -s.fy * off, ay = ty + s.fx * off; const ad = dist(s.x, s.y, ax, ay);
   const [lo, hi] = gun.dmg;
   w.bullets.push({ id: newId(w), x: s.x, y: s.y, px: s.x, py: s.y, dx: (ax - s.x) / ad, dy: (ay - s.y) / ad, left: gun.max * 1.2, owner: s.id, target: id, dmg: lo + rnd(w) * (hi - lo), hunting });
+  if (w.map.seen[tileOf(w, tx, ty)] !== 1) w.stats.mon.fogShots = (w.stats.mon.fogShots || 0) + 1;   // monitor: must stay 0
+  if (s.carcassMode === 'drag') w.stats.mon.dragShots = (w.stats.mon.dragShots || 0) + 1;
   s.mag--; w.stats.shots++; w.stats.shotTicks.push(w.tick); if (w.stats.shotTicks.length > 200) w.stats.shotTicks.shift();
   s.aimT = Math.floor(need * 0.35);
   gunS.cond = Math.max(0, gunS.cond - CFG.GUN_WEAR_PER_SHOT);
@@ -250,3 +258,5 @@ export function killScout(w: World, s: Scout, cause: string): void {
 
 HOOKS.los = (w, ax, ay, bx, by) => hasLOS(w, ax, ay, bx, by);
 HOOKS.shoot = (w, s, id, x, y, hunting) => shootAt(w, s, id, x, y, hunting);
+HOOKS.see = (w, s, x, y) => canSee(w, s, x, y);
+HOOKS.drop = (w, s) => dropCarcass(w, s);

@@ -1,0 +1,46 @@
+{
+ "name": "Tabe (v1.1 big island)",
+ "tileM": 2,
+ "legend": {
+  "~": "sea",
+  ".": "beach",
+  ",": "grass",
+  "J": "jungle",
+  "o": "outback",
+  "m": "mangrove",
+  "h": "hills",
+  "^": "cliffs",
+  "p": "pond",
+  "s": "stream"
+ },
+ "landing": [
+  70,
+  426
+ ],
+ "rookeries": [
+  [
+   564,
+   514
+  ],
+  [
+   396,
+   563
+  ],
+  [
+   320,
+   156
+  ],
+  [
+   524,
+   133
+  ],
+  [
+   436,
+   350
+  ],
+  [
+   693,
+   264
+  ]
+ ]
+}
